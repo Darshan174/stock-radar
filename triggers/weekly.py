@@ -23,7 +23,12 @@ from tenacity import (
     retry_if_exception_type,
 )
 from supabase import create_client, Client
-from anthropic import Anthropic
+
+# Import the Ollama analyzer (no Anthropic needed!)
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from src.agents.analyzer import OllamaAnalyzer
 
 # Configure logging
 logging.basicConfig(
@@ -115,7 +120,7 @@ class ServiceClients:
 
     def __init__(self):
         self._supabase: Optional[Client] = None
-        self._anthropic: Optional[Anthropic] = None
+        self._analyzer: Optional[OllamaAnalyzer] = None
         self._firecrawl_key: Optional[str] = None
         self._slack_token: Optional[str] = None
         self._slack_channel: Optional[str] = None
@@ -133,14 +138,12 @@ class ServiceClients:
         return self._supabase
 
     @property
-    def anthropic(self) -> Anthropic:
-        """Get or create Anthropic client."""
-        if self._anthropic is None:
-            api_key = os.getenv("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError("ANTHROPIC_API_KEY must be set")
-            self._anthropic = Anthropic(api_key=api_key)
-        return self._anthropic
+    def analyzer(self) -> OllamaAnalyzer:
+        """Get or create Ollama analyzer (free, runs locally!)."""
+        if self._analyzer is None:
+            ollama_url = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
+            self._analyzer = OllamaAnalyzer(api_url=ollama_url, model="mistral")
+        return self._analyzer
 
     @property
     def firecrawl_key(self) -> str:
@@ -435,7 +438,9 @@ def analyze_changes(
     competitor_name: str,
 ) -> dict:
     """
-    Analyze changes between crawls using Claude.
+    Analyze changes between crawls using local Ollama (FREE!).
+
+    Uses OllamaAnalyzer instead of Claude API. Saves ~$0.05 per request.
 
     Args:
         previous_content: Markdown from previous crawl.
@@ -445,54 +450,27 @@ def analyze_changes(
     Returns:
         Analysis result with detected changes.
     """
-    logger.info(f"Analyzing changes for {competitor_name}")
+    logger.info(f"Analyzing {competitor_name} with Ollama (FREE, no API costs!)")
 
-    # Truncate content to fit context window
-    max_content_length = 15000
-    prev_truncated = previous_content[:max_content_length]
-    curr_truncated = current_content[:max_content_length]
-
-    message = clients.anthropic.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=2000,
-        messages=[
-            {
-                "role": "user",
-                "content": ANALYSIS_PROMPT.format(
-                    previous_content=prev_truncated,
-                    current_content=curr_truncated,
-                ),
-            }
-        ],
+    # Use the OllamaAnalyzer from our agents
+    analysis_result = clients.analyzer.analyze_changes(
+        competitor_name=competitor_name,
+        old_markdown=previous_content,
+        new_markdown=current_content,
     )
 
-    # Parse response
-    response_text = message.content[0].text
-
-    # Extract JSON from response
-    try:
-        # Handle potential markdown code blocks
-        if "```json" in response_text:
-            json_start = response_text.find("```json") + 7
-            json_end = response_text.find("```", json_start)
-            response_text = response_text[json_start:json_end].strip()
-        elif "```" in response_text:
-            json_start = response_text.find("```") + 3
-            json_end = response_text.find("```", json_start)
-            response_text = response_text[json_start:json_end].strip()
-
-        analysis = json.loads(response_text)
-    except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse Claude response as JSON: {e}")
-        analysis = {
+    if analysis_result is None:
+        logger.info(f"No significant changes for {competitor_name}")
+        return {
             "has_changes": False,
             "changes": [],
-            "overall_summary": "Analysis failed to parse.",
-            "raw_response": response_text,
         }
 
-    logger.info(f"Analysis complete: has_changes={analysis.get('has_changes')}")
-    return analysis
+    # Return in expected format
+    return {
+        "has_changes": analysis_result.get("has_changes", False),
+        "changes": analysis_result.get("changes", []),
+    }
 
 
 # -----------------------------------------------------------------------------
