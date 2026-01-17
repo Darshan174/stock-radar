@@ -3,19 +3,19 @@
 Core agents for competitor intelligence:
 - crawler: Firecrawl-based web scraping
 - storage: Supabase persistence and vector embeddings
-- analyzer: Claude-powered change detection
+- analyzer: Ollama-powered change detection (FREE, runs locally!)
 - alerts: Slack notifications
 """
 
 from .crawler import CompetitorCrawler
 from .storage import SupabaseStorage, OllamaEmbeddings
-from .analyzer import ChangeAnalyzer
+from .analyzer import OllamaAnalyzer
 from .alerts import SlackNotifier
 
 __all__ = [
     "CompetitorCrawler",
     "SupabaseStorage",
     "OllamaEmbeddings",
-    "ChangeAnalyzer",
+    "OllamaAnalyzer",
     "SlackNotifier"
 ]

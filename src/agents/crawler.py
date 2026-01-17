@@ -15,7 +15,7 @@ from tenacity import (
     before_sleep_log
 )
 
-from firecrawl import FirecrawlApp
+from firecrawl import Firecrawl
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class CompetitorCrawler:
         if not api_key:
             raise ValueError("FIRECRAWL_API_KEY environment variable not set")
 
-        self.app = FirecrawlApp(api_key=api_key)
+        self.app = Firecrawl(api_key=api_key)
         logger.info("CompetitorCrawler initialized")
 
     @retry(
@@ -77,35 +77,36 @@ class CompetitorCrawler:
         try:
             logger.info(f"[{crawl_timestamp}] Scraping URL: {url}")
 
-            # Call Firecrawl API with markdown and HTML formats
-            result = self.app.scrape_url(
+            # Call Firecrawl API with markdown and HTML formats (v2 API)
+            doc = self.app.scrape(
                 url,
-                params={
-                    "formats": ["markdown", "html"],
-                    "onlyMainContent": True,
-                    "removeBase64Images": True,
-                    "includeTags": ["article", "main", "div", "section"],
-                    "excludeTags": ["nav", "footer", "script", "style", "iframe", "noscript"]
-                }
+                formats=["markdown", "html"]
             )
 
             # Check API response
-            if not result or not result.get("success", False):
-                error_msg = result.get("error", "Unknown error") if result else "Empty response"
-                logger.error(f"Failed to scrape {url}: {error_msg}")
+            if not doc:
+                logger.error(f"Failed to scrape {url}: Empty response")
                 return {
                     "url": url,
                     "markdown": "",
                     "html": "",
                     "crawl_date": crawl_timestamp,
                     "status": "failed",
-                    "error": error_msg
+                    "error": "Empty response from Firecrawl"
                 }
 
-            # Extract content
-            markdown_content = result.get("markdown", "")
-            html_content = result.get("html", "")
-            metadata = result.get("metadata", {})
+            # Extract content from Document object
+            markdown_content = doc.markdown or ""
+            html_content = doc.html or ""
+            metadata = doc.metadata or {}
+
+            # Handle metadata (could be dict or object)
+            if hasattr(metadata, '__dict__'):
+                meta_dict = vars(metadata)
+            elif isinstance(metadata, dict):
+                meta_dict = metadata
+            else:
+                meta_dict = {}
 
             crawl_data = {
                 "url": url,
@@ -114,10 +115,10 @@ class CompetitorCrawler:
                 "crawl_date": crawl_timestamp,
                 "status": "success",
                 "metadata": {
-                    "title": metadata.get("title", ""),
-                    "description": metadata.get("description", ""),
-                    "language": metadata.get("language", ""),
-                    "sourceURL": metadata.get("sourceURL", url)
+                    "title": meta_dict.get("title", ""),
+                    "description": meta_dict.get("description", ""),
+                    "language": meta_dict.get("language", ""),
+                    "sourceURL": meta_dict.get("sourceURL", url)
                 }
             }
 

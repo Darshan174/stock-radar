@@ -10,7 +10,7 @@ Designed to be triggered via Trigger.dev webhook or scheduled task.
 import os
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Any
 from dataclasses import dataclass, field, asdict
 from enum import Enum
@@ -205,10 +205,10 @@ def get_competitors() -> list[dict]:
     try:
         result = clients.supabase.table("competitors").select(
             "id, name, url"
-        ).eq("active", True).execute()
+        ).execute()
 
         competitors = result.data if result.data else []
-        logger.info(f"Found {len(competitors)} active competitors")
+        logger.info(f"Found {len(competitors)} competitors")
         return competitors
 
     except Exception as e:
@@ -238,7 +238,7 @@ def crawl_competitor(url: str) -> dict:
     logger.info(f"Crawling {url}")
 
     response = requests.post(
-        "https://api.firecrawl.dev/v1/scrape",
+        "https://api.firecrawl.dev/v2/scrape",
         headers={
             "Authorization": f"Bearer {clients.firecrawl_key}",
             "Content-Type": "application/json",
@@ -247,7 +247,7 @@ def crawl_competitor(url: str) -> dict:
             "url": url,
             "formats": ["markdown", "html"],
             "onlyMainContent": True,
-            "removeTags": ["nav", "footer", "script", "style"],
+            "timeout": 30000,
         },
         timeout=60,
     )
@@ -261,7 +261,7 @@ def crawl_competitor(url: str) -> dict:
         "url": url,
         "markdown": data.get("data", {}).get("markdown", ""),
         "html": data.get("data", {}).get("html", ""),
-        "crawl_date": datetime.utcnow().isoformat(),
+        "crawl_date": datetime.now(timezone.utc).isoformat(),
     }
 
     logger.info(f"Successfully crawled {url} ({len(crawl_data['markdown'])} chars)")
@@ -386,7 +386,7 @@ def get_previous_crawl(competitor_id: int, current_crawl_id: int) -> Optional[di
 
 
 # -----------------------------------------------------------------------------
-# Stage 6: Analyze Changes with Claude
+# Stage 6: Analyze Changes with Ollama (FREE!)
 # -----------------------------------------------------------------------------
 
 ANALYSIS_PROMPT = """You are analyzing competitor website changes for a business intelligence system.
@@ -440,7 +440,7 @@ def analyze_changes(
     """
     Analyze changes between crawls using local Ollama (FREE!).
 
-    Uses OllamaAnalyzer instead of Claude API. Saves ~$0.05 per request.
+    Uses OllamaAnalyzer - FREE, runs locally on your computer!
 
     Args:
         previous_content: Markdown from previous crawl.
@@ -483,7 +483,7 @@ def store_changes(crawl_id: int, analysis: dict) -> list[dict]:
 
     Args:
         crawl_id: ID of the crawl where changes were detected.
-        analysis: Analysis result from Claude.
+        analysis: Analysis result from Ollama.
 
     Returns:
         List of stored change records.
@@ -640,7 +640,7 @@ def process_competitor(competitor: dict) -> CompetitorResult:
     2. Generate embeddings with Ollama
     3. Store crawl in Supabase
     4. Get previous crawl
-    5. Analyze changes with Claude
+    5. Analyze changes with Ollama (FREE!)
     6. Store changes
     7. Send Slack alert
 

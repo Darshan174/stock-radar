@@ -34,10 +34,10 @@ def check_env_vars():
         "FIRECRAWL_API_KEY": "Firecrawl API key",
         "SUPABASE_URL": "Supabase project URL",
         "SUPABASE_KEY": "Supabase API key",
-        "ANTHROPIC_API_KEY": "Claude API key",
         "SLACK_BOT_TOKEN": "Slack bot token",
         "SLACK_CHANNEL_ID": "Slack channel ID",
         "TRIGGER_API_KEY": "Trigger.dev API key"
+        # Note: No ANTHROPIC_API_KEY needed - we use Ollama (free!)
     }
 
     print(f"\n{'='*60}")
@@ -109,10 +109,10 @@ def test_imports():
     modules = {
         "firecrawl": "Firecrawl",
         "supabase": "Supabase",
-        "anthropic": "Anthropic",
         "slack_sdk": "Slack SDK",
         "tenacity": "Tenacity",
-        "requests": "Requests"
+        "requests": "Requests",
+        "ollama": "Ollama"
     }
 
     missing = []
@@ -160,17 +160,17 @@ def test_connections():
         else:
             print("⚠️  Supabase schema incomplete - run migrations")
             all_ok = False
-    except Exception as e:
+    except Exception as e:###############CHANGE API, TO OLLAMA############
         print(f"✗ Supabase: {str(e)}")
         all_ok = False
 
-    # Test Claude
+    # Test Ollama Analyzer (FREE - no API key needed!)
     try:
-        from src.agents.analyzer import ChangeAnalyzer
-        analyzer = ChangeAnalyzer()
-        print("✓ Claude API configured")
+        from src.agents.analyzer import OllamaAnalyzer
+        analyzer = OllamaAnalyzer(model="mistral")
+        print("✓ Ollama Analyzer configured (FREE!)")
     except Exception as e:
-        print(f"✗ Claude: {str(e)}")
+        print(f"✗ Ollama Analyzer: {str(e)}")
         all_ok = False
 
     # Test Slack

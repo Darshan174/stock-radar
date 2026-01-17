@@ -11,9 +11,13 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent.parent / ".env")
+
 from src.agents.crawler import CompetitorCrawler
 from src.agents.storage import SupabaseStorage, OllamaEmbeddings
-from src.agents.analyzer import ChangeAnalyzer
+from src.agents.analyzer import OllamaAnalyzer  # FREE - no Claude API needed!
 from src.agents.alerts import SlackNotifier
 
 
@@ -105,14 +109,14 @@ def test_embeddings():
 
 
 def test_analyzer():
-    """Test Claude analyzer."""
+    """Test Ollama analyzer (FREE - no API costs!)."""
     print("\n" + "="*60)
-    print("Testing ChangeAnalyzer")
+    print("Testing OllamaAnalyzer (FREE!)")
     print("="*60)
 
     try:
-        analyzer = ChangeAnalyzer()
-        print("✓ Analyzer initialized")
+        analyzer = OllamaAnalyzer(model="mistral")
+        print("✓ Ollama Analyzer initialized")
 
         # Test with sample data
         old_text = """
@@ -152,7 +156,14 @@ def test_slack():
     print("="*60)
 
     try:
-        notifier = SlackNotifier()
+        bot_token = os.getenv("SLACK_BOT_TOKEN")
+        channel_id = os.getenv("SLACK_CHANNEL_ID")
+
+        if not bot_token or not channel_id:
+            print("✗ SLACK_BOT_TOKEN or SLACK_CHANNEL_ID not set")
+            return None
+
+        notifier = SlackNotifier(bot_token, channel_id)
         print("✓ Slack notifier initialized")
 
         # Test connection

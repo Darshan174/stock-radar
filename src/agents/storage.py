@@ -10,7 +10,6 @@ from typing import Optional, Any
 
 import requests
 from supabase import create_client, Client
-from supabase.lib.client_options import ClientOptions
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -152,12 +151,8 @@ class SupabaseStorage:
                 "environment variables or pass them as arguments."
             )
 
-        # Configure client with longer timeout for vector operations
-        options = ClientOptions(
-            postgrest_client_timeout=30,
-            storage_client_timeout=30
-        )
-        self.client: Client = create_client(url, key, options)
+        # Create Supabase client
+        self.client: Client = create_client(url, key)
         self.embeddings = OllamaEmbeddings(api_url=ollama_url)
 
         logger.info(f"Initialized SupabaseStorage connected to {url}")
