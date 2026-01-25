@@ -1,21 +1,25 @@
-"""Research Radar Agents
+"""Stock Radar Agents
 
-Core agents for competitor intelligence:
-- crawler: Firecrawl-based web scraping
-- storage: Supabase persistence and vector embeddings
-- analyzer: Ollama-powered change detection (FREE, runs locally!)
-- alerts: Slack notifications
+Core agents for stock market analysis:
+- fetcher: Yahoo Finance stock data fetching
+- storage: Supabase persistence with Cohere embeddings
+- analyzer: LiteLLM-powered analysis (Groq -> Gemini -> Ollama)
+- alerts: Slack & Telegram notifications
 """
 
-from .crawler import CompetitorCrawler
-from .storage import SupabaseStorage, OllamaEmbeddings
-from .analyzer import OllamaAnalyzer
-from .alerts import SlackNotifier
+from .fetcher import StockFetcher
+from .storage import StockStorage, CohereEmbeddings
+from .analyzer import StockAnalyzer, TradingMode, Signal
+from .alerts import SlackNotifier, TelegramNotifier, NotificationManager
 
 __all__ = [
-    "CompetitorCrawler",
-    "SupabaseStorage",
-    "OllamaEmbeddings",
-    "OllamaAnalyzer",
-    "SlackNotifier"
+    "StockFetcher",
+    "StockStorage",
+    "CohereEmbeddings",
+    "StockAnalyzer",
+    "TradingMode",
+    "Signal",
+    "SlackNotifier",
+    "TelegramNotifier",
+    "NotificationManager",
 ]

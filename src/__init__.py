@@ -1,3 +1,3 @@
-"""Research Radar - Competitor Intelligence System"""
+"""Stock Radar - AI-Powered Stock Analysis for Traders"""
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
