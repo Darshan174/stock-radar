@@ -49,13 +49,14 @@ export default function StocksPage() {
       }
 
       if (stocksData) {
-        const stocksWithPrices = await Promise.all(
+        // First, quickly load stocks with historical data
+        const stocksWithHistoricalPrices = await Promise.all(
           stocksData.map(async (stock) => {
             const { data: priceData } = await supabase
               .from("price_history")
               .select("close, timestamp")
               .eq("stock_id", stock.id)
-              .order("timestamp", { ascending: true })
+              .order("timestamp", { ascending: false })
               .limit(30)
 
             let latest_price = 0
@@ -63,12 +64,12 @@ export default function StocksPage() {
             let sparkline_data: { time: string; value: number }[] = []
 
             if (priceData && priceData.length > 0) {
-              latest_price = priceData[priceData.length - 1].close
+              latest_price = priceData[0].close
               if (priceData.length > 1) {
-                const prev = priceData[priceData.length - 2].close
+                const prev = priceData[1].close
                 price_change = prev > 0 ? ((latest_price - prev) / prev) * 100 : 0
               }
-              sparkline_data = priceData.map((p) => ({
+              sparkline_data = [...priceData].reverse().map((p) => ({
                 time: p.timestamp.split("T")[0],
                 value: p.close,
               }))
@@ -78,7 +79,36 @@ export default function StocksPage() {
           })
         )
 
-        setStocks(stocksWithPrices)
+        // Show stocks immediately with historical prices
+        setStocks(stocksWithHistoricalPrices)
+        setLoading(false)
+
+        // Then fetch live prices in background and update
+        const updatedStocks = await Promise.all(
+          stocksWithHistoricalPrices.map(async (stock) => {
+            try {
+              const liveResponse = await fetch(`/api/live-price?symbol=${encodeURIComponent(stock.symbol)}`, {
+                cache: "no-store"
+              })
+              if (liveResponse.ok) {
+                const liveData = await liveResponse.json()
+                if (liveData.price) {
+                  return {
+                    ...stock,
+                    latest_price: liveData.price,
+                    price_change: liveData.changePercent || stock.price_change,
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn(`Failed to fetch live price for ${stock.symbol}:`, e)
+            }
+            return stock
+          })
+        )
+
+        // Update with live prices
+        setStocks(updatedStocks)
       }
     } catch (error) {
       console.error("Error:", error)
@@ -86,6 +116,39 @@ export default function StocksPage() {
       setLoading(false)
     }
   }
+
+  // Refresh live prices periodically
+  useEffect(() => {
+    if (loading || stocks.length === 0) return
+
+    const priceRefreshInterval = setInterval(async () => {
+      const updatedStocks = await Promise.all(
+        stocks.map(async (stock) => {
+          try {
+            const liveResponse = await fetch(`/api/live-price?symbol=${encodeURIComponent(stock.symbol)}`, {
+              cache: "no-store"
+            })
+            if (liveResponse.ok) {
+              const liveData = await liveResponse.json()
+              if (liveData.price) {
+                return {
+                  ...stock,
+                  latest_price: liveData.price,
+                  price_change: liveData.changePercent || stock.price_change,
+                }
+              }
+            }
+          } catch {
+            // Ignore errors on refresh
+          }
+          return stock
+        })
+      )
+      setStocks(updatedStocks)
+    }, 30000) // Refresh every 30 seconds
+
+    return () => clearInterval(priceRefreshInterval)
+  }, [loading, stocks.length]) // Only depend on length to avoid infinite loop
 
   useEffect(() => {
     fetchStocks()

@@ -401,20 +401,25 @@ function AIScoreCard({
     score,
     maxScore = 100,
     color,
-    description
+    description,
+    infoText
 }: {
     title: string
     score: number
     maxScore?: number
     color: string
     description: string
+    infoText?: string
 }) {
     const percentage = (score / maxScore) * 100
 
     return (
         <div className="p-3 rounded-lg bg-muted/50 space-y-2">
             <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">{title}</span>
+                <span className="text-sm font-medium flex items-center gap-1">
+                    {title}
+                    {infoText && <InfoTooltip text={infoText} />}
+                </span>
                 <span className="text-lg font-bold" style={{ color }}>{score}</span>
             </div>
             <div className="h-2 bg-muted rounded-full overflow-hidden">
@@ -505,18 +510,21 @@ function AIAlgoPredictionPanel({ prediction, symbol }: { prediction: AIAlgoPredi
                     score={prediction.momentum_score}
                     color={prediction.momentum_score >= 70 ? COLORS.success : prediction.momentum_score >= 40 ? COLORS.warning : COLORS.danger}
                     description="Price trend strength"
+                    infoText="Measures price trend strength using RSI, MACD, and price vs SMA. Higher scores indicate stronger bullish momentum. Score above 70 is bullish, below 40 is bearish."
                 />
                 <AIScoreCard
                     title="Value"
                     score={prediction.value_score}
                     color={prediction.value_score >= 70 ? COLORS.success : prediction.value_score >= 40 ? COLORS.warning : COLORS.danger}
                     description="Valuation attractiveness"
+                    infoText="Evaluates if the stock is undervalued based on P/E ratio, P/B ratio, dividend yield, and PEG ratio. Higher scores suggest the stock may be undervalued."
                 />
                 <AIScoreCard
                     title="Quality"
                     score={prediction.quality_score}
                     color={prediction.quality_score >= 70 ? COLORS.success : prediction.quality_score >= 40 ? COLORS.warning : COLORS.danger}
                     description="Financial strength"
+                    infoText="Assesses financial health using ROE, profit margins, debt-to-equity ratio, and current ratio. Higher scores indicate stronger fundamentals."
                 />
             </div>
 
@@ -525,6 +533,7 @@ function AIAlgoPredictionPanel({ prediction, symbol }: { prediction: AIAlgoPredi
                 <h4 className="text-sm font-semibold flex items-center gap-2">
                     <Zap className="h-4 w-4" />
                     Key Factors
+                    <InfoTooltip text="Key factors impacting the trading signal, identified by AI analysis of fundamentals and technicals. Green indicates positive impact, red indicates negative." />
                 </h4>
                 <div className="space-y-2">
                     {prediction.key_factors.map((factor, i) => (
@@ -544,7 +553,7 @@ function AIAlgoPredictionPanel({ prediction, symbol }: { prediction: AIAlgoPredi
                                     factor.impact === "negative" ? "text-red-400 border-red-400/30" :
                                         "text-yellow-400 border-yellow-400/30"
                             )}>
-                                {(factor.weight * 100).toFixed(0)}% weight
+                                {factor.weight != null ? `${(factor.weight * 100).toFixed(0)}% weight` : factor.impact}
                             </Badge>
                         </div>
                     ))}
@@ -556,6 +565,7 @@ function AIAlgoPredictionPanel({ prediction, symbol }: { prediction: AIAlgoPredi
                 <h4 className="text-sm font-semibold flex items-center gap-2">
                     <Brain className="h-4 w-4" />
                     AI Reasoning
+                    <InfoTooltip text="AI-generated explanation of the algorithmic scores and trading signal. This reasoning is based on the calculated scores and market data." />
                 </h4>
                 <div className="space-y-2">
                     {prediction.reasoning.map((reason, i) => (

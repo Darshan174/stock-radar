@@ -21,6 +21,7 @@ from agents.scorer import StockScorer
 # RAG imports (optional, for enhanced analysis)
 try:
     from agents.rag_retriever import RAGRetriever, retrieve_analysis_context
+    from agents.rag_validator import RAGValidator, validate_rag_analysis
     RAG_AVAILABLE = True
 except ImportError:
     RAG_AVAILABLE = False
@@ -68,6 +69,8 @@ class AnalysisResult:
     created_at: str
     # Algo trading fields
     algo_prediction: Optional[Dict] = None
+    # RAG validation scores
+    rag_validation: Optional[Dict] = None
 
 
 @dataclass
@@ -142,12 +145,14 @@ class StockAnalyzer:
         # Initialize RAG retriever for enhanced analysis
         self.enable_rag = enable_rag and RAG_AVAILABLE
         self.rag_retriever = None
+        self.rag_validator = None
         if self.enable_rag:
             try:
                 self.rag_retriever = RAGRetriever()
-                logger.info("RAG retriever initialized for enhanced analysis")
+                self.rag_validator = RAGValidator()
+                logger.info("RAG retriever and validator initialized for enhanced analysis")
             except Exception as e:
-                logger.warning(f"Failed to initialize RAG retriever: {e}")
+                logger.warning(f"Failed to initialize RAG components: {e}")
                 self.enable_rag = False
 
         logger.info(f"StockAnalyzer initialized with models: {self.available_models}, RAG: {self.enable_rag}")
@@ -242,7 +247,7 @@ class StockAnalyzer:
         quote: Dict[str, Any],
         indicators: Dict[str, Any],
         news: List[Dict[str, Any]] = None
-    ) -> str:
+    ) -> tuple[str, List[Dict[str, Any]]]:
         """
         Get RAG context for enhanced analysis.
 
@@ -254,25 +259,41 @@ class StockAnalyzer:
             news: Recent news articles
 
         Returns:
-            Formatted context string for prompt injection
+            Tuple of (formatted context string, raw retrieved documents)
         """
         if not self.enable_rag or not self.rag_retriever:
-            return ""
+            return "", []
 
         try:
-            context = self.rag_retriever.get_analysis_context(
-                symbol=symbol,
-                mode=mode,
-                current_indicators=indicators,
-                current_quote=quote,
-                news=news
+            # Get full context object to access raw documents
+            rag_context = self.rag_retriever.retrieve_context(
+                query=f"{symbol} {mode} analysis",
+                stock_symbol=symbol,
+                include_analyses=True,
+                include_signals=True,
+                include_news=True,
+                include_knowledge=False,
+                max_results_per_source=3,
+                match_threshold=0.4
             )
-            if context:
-                logger.info(f"Retrieved RAG context for {symbol} ({len(context)} chars)")
-            return context
+            
+            # Collect raw documents for validation
+            raw_docs = []
+            raw_docs.extend(rag_context.similar_analyses)
+            raw_docs.extend(rag_context.similar_signals)
+            raw_docs.extend(rag_context.relevant_news)
+            
+            # Format context string for prompt
+            context_str = self.rag_retriever.format_context_for_prompt(rag_context)
+            
+            if context_str:
+                logger.info(f"Retrieved RAG context for {symbol} ({len(context_str)} chars, {len(raw_docs)} docs)")
+            
+            return context_str, raw_docs
+            
         except Exception as e:
             logger.warning(f"Failed to get RAG context: {e}")
-            return ""
+            return "", []
 
     # -------------------------------------------------------------------------
     # Intraday Analysis
@@ -326,7 +347,7 @@ Reddit Rank: #{reddit_rank if reddit_rank else 'Not ranked'}
 Overall Social Sentiment: {overall}"""
 
         # Get RAG context for enhanced analysis
-        rag_context = self._get_rag_context(
+        rag_context, rag_docs = self._get_rag_context(
             symbol=symbol,
             mode="intraday",
             quote=quote,
@@ -388,6 +409,22 @@ Respond with JSON only:"""
                 return None
 
             duration_ms = int((time.time() - start_time) * 1000)
+            
+            # Run RAG validation if we have context
+            rag_validation_result = None
+            if rag_docs and self.rag_validator:
+                try:
+                    validation = self.rag_validator.validate_analysis(
+                        query=f"{symbol} intraday analysis",
+                        answer=analysis.get("reasoning", "") + " " + analysis.get("technical_summary", ""),
+                        retrieved_context=rag_docs,
+                        analysis_mode="intraday",
+                        source_data={"quote": quote, "indicators": indicators}
+                    )
+                    rag_validation_result = validation.to_dict()
+                    logger.info(f"RAG validation for {symbol}: grade={validation.quality_grade}, score={validation.overall_score:.1f}")
+                except Exception as ve:
+                    logger.warning(f"RAG validation failed: {ve}")
 
             return AnalysisResult(
                 symbol=symbol,
@@ -405,7 +442,8 @@ Respond with JSON only:"""
                 llm_model=model_used,
                 tokens_used=tokens,
                 analysis_duration_ms=duration_ms,
-                created_at=datetime.now(timezone.utc).isoformat()
+                created_at=datetime.now(timezone.utc).isoformat(),
+                rag_validation=rag_validation_result
             )
 
         except Exception as e:
@@ -452,7 +490,7 @@ Always respond with valid JSON only."""
             news_text = "\n".join(news_items)
 
         # Get RAG context for enhanced analysis
-        rag_context = self._get_rag_context(
+        rag_context, rag_docs = self._get_rag_context(
             symbol=symbol,
             mode="longterm",
             quote=quote,
@@ -536,6 +574,22 @@ Respond with JSON only:"""
                 return None
 
             duration_ms = int((time.time() - start_time) * 1000)
+            
+            # Run RAG validation if we have context
+            rag_validation_result = None
+            if rag_docs and self.rag_validator:
+                try:
+                    validation = self.rag_validator.validate_analysis(
+                        query=f"{symbol} longterm analysis",
+                        answer=analysis.get("reasoning", "") + " " + analysis.get("technical_summary", ""),
+                        retrieved_context=rag_docs,
+                        analysis_mode="longterm",
+                        source_data={"quote": quote, "indicators": indicators, "fundamentals": fundamentals}
+                    )
+                    rag_validation_result = validation.to_dict()
+                    logger.info(f"RAG validation for {symbol}: grade={validation.quality_grade}, score={validation.overall_score:.1f}")
+                except Exception as ve:
+                    logger.warning(f"RAG validation failed: {ve}")
 
             return AnalysisResult(
                 symbol=symbol,
@@ -553,7 +607,8 @@ Respond with JSON only:"""
                 llm_model=model_used,
                 tokens_used=tokens,
                 analysis_duration_ms=duration_ms,
-                created_at=datetime.now(timezone.utc).isoformat()
+                created_at=datetime.now(timezone.utc).isoformat(),
+                rag_validation=rag_validation_result
             )
 
         except Exception as e:

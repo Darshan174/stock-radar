@@ -29,10 +29,13 @@ import {
   Time,
   CrosshairMode,
   LineStyle,
+  LineType,
   CandlestickSeries,
   LineSeries,
   HistogramSeries,
   AreaSeries,
+  BarSeries,
+  BaselineSeries,
   ISeriesApi,
 } from "lightweight-charts"
 import { ChartToolbar, ChartIndicators, defaultIndicators, ChartType } from "./chart-toolbar"
@@ -60,6 +63,35 @@ interface CandlestickChartProps {
   height?: number
   showVolume?: boolean
   currency?: string
+}
+
+// Heikin Ashi calculation helper
+function calculateHeikinAshi(data: CandlestickChartProps['data']): CandlestickData<Time>[] {
+  if (data.length === 0) return []
+
+  const result: CandlestickData<Time>[] = []
+
+  for (let i = 0; i < data.length; i++) {
+    const current = data[i]
+    const prev = i > 0 ? result[i - 1] : null
+
+    const haClose = (current.open + current.high + current.low + current.close) / 4
+    const haOpen = prev
+      ? (prev.open + prev.close) / 2
+      : (current.open + current.close) / 2
+    const haHigh = Math.max(current.high, haOpen, haClose)
+    const haLow = Math.min(current.low, haOpen, haClose)
+
+    result.push({
+      time: current.time as Time,
+      open: haOpen,
+      high: haHigh,
+      low: haLow,
+      close: haClose,
+    })
+  }
+
+  return result
 }
 
 // Custom Legend Component
@@ -173,7 +205,7 @@ export function CandlestickChart({
 
   // Format data for the chart
   const chartData = useMemo(() => {
-    if (!data.length) return { candles: [], volumes: [] }
+    if (!data.length) return { candles: [], heikinAshi: [], lineData: [], volumes: [], baselineValue: 0 }
 
     const candles: CandlestickData<Time>[] = data.map((d) => ({
       time: d.time as Time,
@@ -183,14 +215,24 @@ export function CandlestickChart({
       close: d.close,
     }))
 
+    const heikinAshi = calculateHeikinAshi(data)
+
+    const lineData = data.map((d) => ({
+      time: d.time as Time,
+      value: d.close,
+    }))
+
     const volumes = data.map((d) => ({
       time: d.time as Time,
       value: d.volume || 0,
       color: d.close >= d.open ? "rgba(38, 166, 154, 0.6)" : "rgba(239, 83, 80, 0.6)",
     }))
 
-    return { candles, volumes }
-  }, [data])
+    // Baseline value - use first close price
+    const baselineValue = data[0].close
+
+    return { candles, heikinAshi, lineData, volumes, baselineValue }
+  }, [data, chartType])
 
   // Toolbar handlers
   const handleZoomIn = useCallback(() => {
@@ -355,17 +397,117 @@ export function CandlestickChart({
 
     chartRef.current = chart
 
-    // Candlestick series with brighter colors
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#00E676",
-      downColor: "#FF1744",
-      borderUpColor: "#00E676",
-      borderDownColor: "#FF1744",
-      wickUpColor: "#00E676",
-      wickDownColor: "#FF1744",
-      borderVisible: false,
-    })
-    candleSeries.setData(chartData.candles)
+    // Create main series based on chart type
+    let mainSeries: ISeriesApi<"Candlestick"> | ISeriesApi<"Line"> | ISeriesApi<"Area"> | ISeriesApi<"Bar"> | ISeriesApi<"Baseline">
+
+    switch (chartType) {
+      case "candlestick":
+        mainSeries = chart.addSeries(CandlestickSeries, {
+          upColor: "#00E676",
+          downColor: "#FF1744",
+          borderUpColor: "#00E676",
+          borderDownColor: "#FF1744",
+          wickUpColor: "#00E676",
+          wickDownColor: "#FF1744",
+          borderVisible: false,
+        })
+        mainSeries.setData(chartData.candles)
+        break
+
+      case "hollowCandles":
+        mainSeries = chart.addSeries(CandlestickSeries, {
+          upColor: "transparent",
+          downColor: "#FF1744",
+          borderUpColor: "#00E676",
+          borderDownColor: "#FF1744",
+          wickUpColor: "#00E676",
+          wickDownColor: "#FF1744",
+          borderVisible: true,
+        })
+        mainSeries.setData(chartData.candles)
+        break
+
+      case "bars":
+        mainSeries = chart.addSeries(BarSeries, {
+          upColor: "#00E676",
+          downColor: "#FF1744",
+          openVisible: true,
+          thinBars: false,
+        })
+        mainSeries.setData(chartData.candles)
+        break
+
+      case "heikinAshi":
+        mainSeries = chart.addSeries(CandlestickSeries, {
+          upColor: "#00E676",
+          downColor: "#FF1744",
+          borderUpColor: "#00E676",
+          borderDownColor: "#FF1744",
+          wickUpColor: "#00E676",
+          wickDownColor: "#FF1744",
+          borderVisible: false,
+        })
+        mainSeries.setData(chartData.heikinAshi)
+        break
+
+      case "line":
+        mainSeries = chart.addSeries(LineSeries, {
+          color: "#2962FF",
+          lineWidth: 2,
+          crosshairMarkerVisible: true,
+          crosshairMarkerRadius: 4,
+        })
+        mainSeries.setData(chartData.lineData)
+        break
+
+      case "stepLine":
+        mainSeries = chart.addSeries(LineSeries, {
+          color: "#2962FF",
+          lineWidth: 2,
+          lineType: LineType.WithSteps,
+          crosshairMarkerVisible: true,
+          crosshairMarkerRadius: 4,
+        })
+        mainSeries.setData(chartData.lineData)
+        break
+
+      case "area":
+        mainSeries = chart.addSeries(AreaSeries, {
+          topColor: "rgba(41, 98, 255, 0.4)",
+          bottomColor: "rgba(41, 98, 255, 0.0)",
+          lineColor: "#2962FF",
+          lineWidth: 2,
+          crosshairMarkerVisible: true,
+        })
+        mainSeries.setData(chartData.lineData)
+        break
+
+      case "baseline":
+        mainSeries = chart.addSeries(BaselineSeries, {
+          baseValue: { type: "price", price: chartData.baselineValue },
+          topLineColor: "#00E676",
+          topFillColor1: "rgba(0, 230, 118, 0.2)",
+          topFillColor2: "rgba(0, 230, 118, 0.0)",
+          bottomLineColor: "#FF1744",
+          bottomFillColor1: "rgba(255, 23, 68, 0.0)",
+          bottomFillColor2: "rgba(255, 23, 68, 0.2)",
+          lineWidth: 2,
+        })
+        mainSeries.setData(chartData.lineData)
+        break
+
+      default:
+        mainSeries = chart.addSeries(CandlestickSeries, {
+          upColor: "#00E676",
+          downColor: "#FF1744",
+          borderUpColor: "#00E676",
+          borderDownColor: "#FF1744",
+          wickUpColor: "#00E676",
+          wickDownColor: "#FF1744",
+          borderVisible: false,
+        })
+        mainSeries.setData(chartData.candles)
+    }
 
     // Add indicator overlays
     if (indicatorData) {
@@ -504,7 +646,7 @@ export function CandlestickChart({
     // Price line
     if (data.length > 0) {
       const lastPrice = data[data.length - 1].close
-      candleSeries.createPriceLine({
+      mainSeries.createPriceLine({
         price: lastPrice,
         color: data[data.length - 1].close >= data[data.length - 1].open ? "#26a69a" : "#ef5350",
         lineWidth: 1,
@@ -542,8 +684,8 @@ export function CandlestickChart({
         return
       }
 
-      const candleData = param.seriesData.get(candleSeries) as CandlestickData<Time> | undefined
-      if (candleData) {
+      const seriesData = param.seriesData.get(mainSeries)
+      if (seriesData) {
         const timeStr = param.time as string
         const dataPoint = data.find((d) => d.time === timeStr)
         const idx = data.findIndex((d) => d.time === timeStr)
@@ -551,8 +693,14 @@ export function CandlestickChart({
 
         if (dataPoint && prevPoint) {
           const change = prevPoint.close > 0 ? ((dataPoint.close - prevPoint.close) / prevPoint.close) * 100 : 0
+
+          // Handle both OHLC and line data formats
+          const ohlcData = 'open' in seriesData
+            ? { o: (seriesData as CandlestickData<Time>).open, h: (seriesData as CandlestickData<Time>).high, l: (seriesData as CandlestickData<Time>).low, c: (seriesData as CandlestickData<Time>).close }
+            : { o: dataPoint.open, h: dataPoint.high, l: dataPoint.low, c: dataPoint.close }
+
           setLegendData({
-            ohlc: { o: candleData.open, h: candleData.high, l: candleData.low, c: candleData.close },
+            ohlc: ohlcData,
             change,
             volume: dataPoint.volume || 0,
           })

@@ -67,7 +67,7 @@ class StockRadar:
         self,
         symbol: str,
         mode: str = "intraday",
-        period: str = "2y",
+        period: str = "max",
         send_alert: bool = True,
         verify: bool = True
     ) -> dict:
@@ -259,8 +259,8 @@ class StockRadar:
                     indicators=indicators
                 )
 
-            # Store analysis
-            analysis_record = self.storage.store_analysis(
+            # Store analysis with embedding for RAG
+            analysis_record = self.storage.store_analysis_with_embedding(
                 stock_id=stock_id,
                 mode=mode,
                 signal=analysis.signal.value,
@@ -275,7 +275,8 @@ class StockRadar:
                 llm_model=analysis.llm_model,
                 llm_tokens_used=analysis.tokens_used,
                 analysis_duration_ms=int((time.time() - start_time) * 1000),
-                algo_prediction=getattr(analysis, 'algo_prediction', None)
+                algo_prediction=getattr(analysis, 'algo_prediction', None),
+                generate_embedding=True  # Enable RAG embeddings
             )
 
             # Store signal if actionable
@@ -509,8 +510,8 @@ def main():
     )
     analyze_parser.add_argument(
         "-p", "--period",
-        default="1mo",
-        help="Data period (default: 1mo)"
+        default="max",
+        help="Data period for historical data (default: max for full history). Options: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, max"
     )
     analyze_parser.add_argument(
         "--no-alert",
@@ -590,6 +591,24 @@ def main():
     ask_parser.add_argument(
         "-s", "--symbol",
         help="Focus on a specific stock symbol"
+    )
+
+    # backfill command - fetch full historical data for stocks
+    backfill_parser = subparsers.add_parser("backfill", help="Backfill full historical price data for stocks")
+    backfill_parser.add_argument(
+        "symbols",
+        nargs="*",
+        help="Stock symbols to backfill (leave empty for all stocks)"
+    )
+    backfill_parser.add_argument(
+        "-p", "--period",
+        default="max",
+        help="Data period to fetch (default: max for full history)"
+    )
+    backfill_parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Clear existing price history before backfilling"
     )
 
     args = parser.parse_args()
@@ -745,6 +764,82 @@ def main():
                 print(f"  - {source.get('type')}: {source.get('symbol') or source.get('headline', '')[:40]}")
 
         print(f"\n[{response.model_used} | {response.tokens_used} tokens | {response.processing_time_ms}ms]")
+
+    elif args.command == "backfill":
+        print("Backfilling historical price data...")
+        print("-" * 50)
+
+        # Get stocks to backfill
+        if args.symbols:
+            symbols = [s.upper() for s in args.symbols]
+        else:
+            # Get all active stocks
+            stocks = radar.storage.list_stocks()
+            symbols = [s["symbol"] for s in stocks]
+
+        if not symbols:
+            print("No stocks found to backfill.")
+            sys.exit(1)
+
+        print(f"Backfilling {len(symbols)} stock(s) with period={args.period}")
+        if args.clear:
+            print("WARNING: Clearing existing price history before backfilling")
+
+        success_count = 0
+        total_records = 0
+
+        for symbol in symbols:
+            try:
+                print(f"\n[{symbol}] Fetching historical data...")
+
+                # Get stock record
+                stock = radar.storage.get_stock_by_symbol(symbol)
+                if not stock:
+                    print(f"  Stock not found in database, skipping")
+                    continue
+
+                stock_id = stock["id"]
+
+                # Clear existing data if requested
+                if args.clear:
+                    radar.storage.client.table("price_history").delete().eq("stock_id", stock_id).execute()
+                    print(f"  Cleared existing price history")
+
+                # Fetch price history
+                prices = radar.fetcher.get_price_history(symbol, period=args.period)
+
+                if not prices:
+                    print(f"  No price data returned")
+                    continue
+
+                # Convert to dict format
+                price_dicts = []
+                for p in prices:
+                    price_dicts.append({
+                        "timestamp": p.timestamp,
+                        "open": p.open,
+                        "high": p.high,
+                        "low": p.low,
+                        "close": p.close,
+                        "volume": p.volume
+                    })
+
+                # Store price data
+                count = radar.storage.store_price_data(
+                    stock_id=stock_id,
+                    prices=price_dicts,
+                    timeframe="1d"
+                )
+
+                print(f"  Stored {count} records (fetched {len(prices)} total)")
+                success_count += 1
+                total_records += count
+
+            except Exception as e:
+                print(f"  Error: {str(e)}")
+
+        print("\n" + "-" * 50)
+        print(f"Backfill complete: {success_count}/{len(symbols)} stocks, {total_records} total records")
 
 
 if __name__ == "__main__":

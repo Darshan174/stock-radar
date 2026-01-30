@@ -4,15 +4,19 @@ import { ChatAssistant } from "@/components/chat-assistant"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Sparkles, Database, Brain, MessageSquare, TrendingUp, Newspaper, FileText } from "lucide-react"
+import { RAGBadge } from "@/components/rag-badge"
 
 export default function ChatPage() {
   return (
     <div className="p-6 h-screen flex flex-col">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Sparkles className="h-6 w-6 text-primary" />
-          AI Chat Assistant
-        </h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Sparkles className="h-6 w-6 text-primary" />
+            AI Chat Assistant
+          </h1>
+          <RAGBadge isActive={true} size="lg" />
+        </div>
         <p className="text-muted-foreground mt-1">
           RAG-powered conversations about your stocks and market analysis
         </p>

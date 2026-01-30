@@ -88,6 +88,47 @@ ON knowledge_base USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)
 -- 5. RPC Functions for RAG retrieval
 -- =============================================================================
 
+-- Function to search news articles semantically
+CREATE OR REPLACE FUNCTION search_news(
+    query_embedding vector(1024),
+    filter_stock_id INT DEFAULT NULL,
+    match_threshold FLOAT DEFAULT 0.5,
+    match_count INT DEFAULT 10
+)
+RETURNS TABLE (
+    id INT,
+    stock_id INT,
+    headline TEXT,
+    summary TEXT,
+    source VARCHAR,
+    url TEXT,
+    published_at TIMESTAMPTZ,
+    sentiment_label VARCHAR,
+    sentiment_score FLOAT,
+    similarity FLOAT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        n.id,
+        n.stock_id,
+        n.headline,
+        n.summary,
+        n.source,
+        n.url,
+        n.published_at,
+        n.sentiment_label,
+        n.sentiment_score::FLOAT,
+        (1 - (n.embedding <=> query_embedding))::FLOAT as similarity
+    FROM news n
+    WHERE n.embedding IS NOT NULL
+      AND (filter_stock_id IS NULL OR n.stock_id = filter_stock_id)
+      AND (1 - (n.embedding <=> query_embedding)) > match_threshold
+    ORDER BY n.embedding <=> query_embedding
+    LIMIT match_count;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Function to search similar analyses
 CREATE OR REPLACE FUNCTION search_similar_analyses(
     query_embedding vector(1024),
@@ -370,6 +411,7 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON TABLE chat_history IS 'Stores conversation history for RAG-powered chat assistant';
 COMMENT ON TABLE knowledge_base IS 'User-uploadable documents and research notes for RAG retrieval';
+COMMENT ON FUNCTION search_news IS 'Search news articles with semantic similarity';
 COMMENT ON FUNCTION search_similar_analyses IS 'Find past analyses semantically similar to a query';
 COMMENT ON FUNCTION search_similar_signals IS 'Find trading signals with similar context';
 COMMENT ON FUNCTION search_knowledge_base IS 'Search user knowledge base with semantic similarity';

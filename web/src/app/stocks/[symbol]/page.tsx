@@ -19,6 +19,7 @@ import { StockInfoPanel } from "@/components/stock-info-panel"
 import { AdvancedChartsPanel } from "@/components/advanced-charts-panel"
 import { LivePriceTicker } from "@/components/live-price-ticker"
 import { FloatingChat } from "@/components/chat-assistant"
+import { RAGInsightsPanel } from "@/components/rag-insights-panel"
 import {
   ArrowLeft,
   TrendingUp,
@@ -29,8 +30,8 @@ import {
   ShieldAlert,
   BarChart3,
   Cpu,
-  Database,
 } from "lucide-react"
+import { RAGBadge } from "@/components/rag-badge"
 import { supabase, Stock, Analysis, PriceHistory } from "@/lib/supabase"
 
 interface StockDetail extends Stock {
@@ -370,6 +371,15 @@ export default function StockDetailPage() {
         />
       </div>
 
+      {/* RAG Insights Panel */}
+      <div className="mb-6">
+        <RAGInsightsPanel
+          symbol={stock.symbol}
+          defaultExpanded={true}
+          autoRefresh={false}
+        />
+      </div>
+
       {/* Chart */}
       <Card className="mb-6">
         <CardHeader>
@@ -588,12 +598,11 @@ export default function StockDetailPage() {
                           {analysis.llm_model.split("/").pop()}
                         </span>
                       )}
-                      {analysis.embedding_text && (
-                        <span className="flex items-center gap-1 text-xs text-purple-400">
-                          <Database className="h-3 w-3" />
-                          RAG
-                        </span>
-                      )}
+                      <RAGBadge
+                        isActive={!!analysis.embedding_text}
+                        size="sm"
+                        variant="inline"
+                      />
                     </div>
                   </div>
                   <span className="text-xs text-muted-foreground">

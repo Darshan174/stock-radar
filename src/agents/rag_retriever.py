@@ -9,7 +9,7 @@ It searches across multiple data sources to find relevant information for:
 - Supporting conversational Q&A about stocks
 """
 
-import os
+
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List

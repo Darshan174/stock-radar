@@ -23,9 +23,9 @@ import {
     Info,
     Twitter,
     MessageCircle,
-    Database,
-    Sparkles,
 } from "lucide-react"
+import { RAGBadge } from "./rag-badge"
+import { RAGQualityBadge } from "./rag-quality-badge"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
 
@@ -56,6 +56,20 @@ interface Analysis {
         reddit_mentions?: number
         overall_sentiment?: "bullish" | "bearish" | "neutral"
         trending_topics?: string[]
+    } | null
+    // RAG validation fields
+    rag_validation?: {
+        faithfulness_score: number
+        context_relevancy_score: number
+        groundedness_score: number
+        temporal_validity_score: number
+        overall_score: number
+        quality_grade: string
+        claims_verified?: number
+        claims_total?: number
+        sources_used?: number
+        oldest_source_age_hours?: number
+        validation_time_ms?: number
     } | null
 }
 
@@ -227,22 +241,12 @@ export function AIAnalysisPanel({
                                         </>
                                     )}
                                     {/* RAG Indicator */}
-                                    {analysis.embedding_text && (
-                                        <>
-                                            <span className="text-muted-foreground/50">•</span>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <span className="flex items-center gap-1 text-purple-400 font-medium cursor-help">
-                                                        <Database className="h-3 w-3" />
-                                                        RAG
-                                                    </span>
-                                                </TooltipTrigger>
-                                                <TooltipContent side="bottom" className="max-w-xs text-xs">
-                                                    This analysis used RAG (Retrieval-Augmented Generation) to include relevant historical context from past analyses and news.
-                                                </TooltipContent>
-                                            </Tooltip>
-                                        </>
-                                    )}
+                                    <span className="text-muted-foreground/50">•</span>
+                                    <RAGBadge
+                                        isActive={!!analysis.embedding_text}
+                                        size="sm"
+                                        variant="inline"
+                                    />
                                 </div>
                             </div>
                         </div>
@@ -474,16 +478,17 @@ export function AIAnalysisPanel({
                                 </div>
 
                                 {/* RAG Badge */}
-                                {analysis.embedding_text ? (
-                                    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-purple-500/10 text-purple-400">
-                                        <Database className="h-3 w-3" />
-                                        <span className="font-medium">RAG Enhanced</span>
-                                    </div>
-                                ) : (
-                                    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted text-muted-foreground">
-                                        <Sparkles className="h-3 w-3" />
-                                        <span>Standard Analysis</span>
-                                    </div>
+                                <RAGBadge
+                                    isActive={!!analysis.embedding_text}
+                                    size="sm"
+                                />
+
+                                {/* RAG Quality Badge */}
+                                {analysis.rag_validation && (
+                                    <RAGQualityBadge
+                                        validation={analysis.rag_validation}
+                                        size="sm"
+                                    />
                                 )}
                             </div>
 

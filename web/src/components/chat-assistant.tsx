@@ -26,7 +26,9 @@ import {
   X,
   Maximize2,
   Minimize2,
+  Database,
 } from "lucide-react"
+import { RAGBadge } from "./rag-badge"
 
 interface ChatMessage {
   id: string
@@ -233,18 +235,21 @@ export function ChatAssistant({
               >
                 <p className="text-sm whitespace-pre-wrap">{message.content}</p>
 
-                {/* Sources Used */}
+                {/* Sources Used - RAG Context */}
                 {message.sourcesUsed && message.sourcesUsed.length > 0 && (
                   <div className="mt-3 pt-2 border-t border-border/50">
-                    <p className="text-xs text-muted-foreground mb-2">
-                      Sources used:
-                    </p>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Database className="h-3 w-3 text-purple-400" />
+                      <p className="text-xs text-purple-400 font-medium">
+                        RAG Sources ({message.sourcesUsed.length}):
+                      </p>
+                    </div>
                     <div className="flex flex-wrap gap-1">
                       {message.sourcesUsed.slice(0, 5).map((source, idx) => (
                         <Badge
                           key={idx}
                           variant="secondary"
-                          className="text-xs flex items-center gap-1"
+                          className="text-xs flex items-center gap-1 bg-purple-500/10 text-purple-300 border-purple-500/20"
                         >
                           {getSourceIcon(source.type)}
                           {source.type === "analysis" && source.symbol
@@ -271,10 +276,19 @@ export function ChatAssistant({
 
                 {/* Metadata */}
                 {message.role === "assistant" && message.processingTimeMs && (
-                  <p className="text-xs text-muted-foreground mt-2">
-                    {message.modelUsed} | {message.tokensUsed} tokens |{" "}
-                    {message.processingTimeMs}ms
-                  </p>
+                  <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+                    <RAGBadge
+                      isActive={message.sourcesUsed && message.sourcesUsed.length > 0}
+                      size="sm"
+                      variant="inline"
+                    />
+                    <span className="text-muted-foreground/50">|</span>
+                    <span>{message.modelUsed}</span>
+                    <span className="text-muted-foreground/50">|</span>
+                    <span>{message.tokensUsed} tokens</span>
+                    <span className="text-muted-foreground/50">|</span>
+                    <span>{message.processingTimeMs}ms</span>
+                  </div>
                 )}
               </div>
 
@@ -294,10 +308,7 @@ export function ChatAssistant({
             </div>
             <div className="bg-muted rounded-lg p-3">
               <div className="flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm text-muted-foreground">
-                  Analyzing with RAG...
-                </span>
+                <RAGBadge isLoading={true} size="sm" variant="inline" />
               </div>
             </div>
           </div>
@@ -367,7 +378,10 @@ export function ChatAssistant({
                   <Sparkles className="h-4 w-4 text-primary" />
                 </div>
                 <div>
-                  <CardTitle className="text-sm">AI Assistant</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-sm">AI Assistant</CardTitle>
+                    <RAGBadge isActive={true} size="sm" showLabel={false} />
+                  </div>
                   <CardDescription className="text-xs">
                     RAG-powered stock chat
                   </CardDescription>
@@ -412,7 +426,10 @@ export function ChatAssistant({
             <Sparkles className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <CardTitle>AI Chat Assistant</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle>AI Chat Assistant</CardTitle>
+              <RAGBadge isActive={true} size="md" />
+            </div>
             <CardDescription>
               RAG-powered conversations about stocks and market analysis
             </CardDescription>
