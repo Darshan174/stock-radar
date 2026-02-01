@@ -6,10 +6,17 @@ import { createClient } from "@supabase/supabase-js"
 
 const execAsync = promisify(exec)
 
-// Initialize Supabase client
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
-const supabase = createClient(supabaseUrl, supabaseKey)
+// Lazy Supabase client initialization to avoid module load errors
+function getSupabase() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error("Missing Supabase environment variables")
+  }
+
+  return createClient(supabaseUrl, supabaseKey)
+}
 
 /**
  * POST /api/backfill-history
@@ -24,6 +31,7 @@ const supabase = createClient(supabaseUrl, supabaseKey)
  */
 export async function POST(request: NextRequest) {
   try {
+    const supabase = getSupabase()
     const { symbol, period = "max", clearExisting = false } = await request.json()
 
     const projectPath = path.join(process.cwd(), "..")
@@ -184,6 +192,7 @@ else:
  */
 export async function GET(request: NextRequest) {
   try {
+    const supabase = getSupabase()
     const searchParams = request.nextUrl.searchParams
     const symbol = searchParams.get("symbol")
 
