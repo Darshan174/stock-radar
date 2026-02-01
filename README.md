@@ -2,22 +2,16 @@
 
 > Pay-per-use AI stock analysis powered by x402 micropayments, on-chain identity, and agent-to-agent coordination.
 
-```
-Client                       Stock-Radar Agent                  Aptos Testnet
-  |                                |                                |
-  |  GET /api/agent/discover       |                                |
-  |<-- capabilities + pricing      |                                |
-  |                                |                                |
-  |  GET /api/agent/momentum       |                                |
-  |<-- 402 {amount, recipient}     |                                |
-  |                                |                                |
-  |  sign & submit payment  -------+------- transfer 100 octas ---->|
-  |                                |                                |
-  |  retry + X-Payment-Tx: hash    |                                |
-  |<-- 200 {momentum_score, ...}   |------- update_reputation ----->|
-```
-
 No accounts. No subscriptions. Just micropayments.
+
+UI DEMO:
+
+https://github.com/user-attachments/assets/0c9450fc-90d2-4067-9c45-1adf5709acf5
+
+CLI DASHBOARD DEMO:
+
+https://github.com/user-attachments/assets/dec2ede4-12a5-4142-9537-957fb0d22c67
+
 
 ---
 
