@@ -44,19 +44,24 @@ export function middleware(request: NextRequest) {
     }
 
     // Inject internal API key for same-origin requests (app's own pages)
-    // so they bypass x402 payment enforcement
-    const referer = request.headers.get("referer") || ""
-    const isSameOrigin = referer.startsWith(`${url.protocol}//${url.host}`)
-    const isExternalClient = request.headers.has("X-Payment-Tx")
+    // so they bypass x402 payment enforcement.
+    // EXCEPT /api/agent/* endpoints — those are payment-gated by design
+    // and the x402-demo page needs to see real 402 responses.
+    const isAgentEndpoint = path.startsWith("/api/agent/")
+    if (!isAgentEndpoint) {
+      const referer = request.headers.get("referer") || ""
+      const isSameOrigin = referer.startsWith(`${url.protocol}//${url.host}`)
+      const isExternalClient = request.headers.has("X-Payment-Tx")
 
-    if (isSameOrigin && !isExternalClient) {
-      const internalKey = process.env.INTERNAL_API_KEY
-      if (internalKey) {
-        const requestHeaders = new Headers(request.headers)
-        requestHeaders.set("X-Internal-Key", internalKey)
-        return NextResponse.next({
-          request: { headers: requestHeaders },
-        })
+      if (isSameOrigin && !isExternalClient) {
+        const internalKey = process.env.INTERNAL_API_KEY
+        if (internalKey) {
+          const requestHeaders = new Headers(request.headers)
+          requestHeaders.set("X-Internal-Key", internalKey)
+          return NextResponse.next({
+            request: { headers: requestHeaders },
+          })
+        }
       }
     }
   }

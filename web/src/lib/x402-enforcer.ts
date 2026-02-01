@@ -196,7 +196,9 @@ export async function withX402(
   // Fire-and-forget reputation update on successful payment + response
   const success = response.status >= 200 && response.status < 400
   const amount = getPriceForEndpoint(endpoint)
-  recordReputationUpdate(endpoint, amount, success).catch(() => {})
+  recordReputationUpdate(endpoint, amount, success).catch((err) => {
+    console.error("[reputation] fire-and-forget failed:", err?.message || err)
+  })
 
   return response
 }

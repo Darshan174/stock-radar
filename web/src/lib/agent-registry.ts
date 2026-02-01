@@ -281,26 +281,27 @@ export class AgentRegistryClient {
    * Parse agent info from contract response
    */
   private parseAgentInfo(data: any): AgentInfo {
+    const rep = data.reputation || {}
     return {
       owner: data.owner,
-      name: data.name,
-      description: data.description,
+      name: data.name || "",
+      description: data.description || "",
       endpointUrl: data.endpoint_url,
-      capabilities: data.capabilities.map((cap: any) => ({
+      capabilities: (data.capabilities || []).map((cap: any) => ({
         name: cap.name,
-        endpoint: cap.endpoint,
+        endpoint: cap.endpoint || "",
         price: parseInt(cap.price),
         description: cap.description,
       })),
-      totalRequests: parseInt(data.total_requests),
-      successfulRequests: parseInt(data.successful_requests),
-      failedRequests: parseInt(data.failed_requests),
-      totalRevenue: parseInt(data.total_revenue),
-      rating: data.rating_count > 0 ? data.rating_sum / data.rating_count : 0,
-      createdAt: parseInt(data.created_at),
-      updatedAt: parseInt(data.updated_at),
-      isActive: data.is_active,
-      tags: data.tags,
+      totalRequests: parseInt(rep.total_requests) || 0,
+      successfulRequests: parseInt(rep.successful_requests) || 0,
+      failedRequests: parseInt(rep.failed_requests) || 0,
+      totalRevenue: parseInt(rep.total_earned) || 0,
+      rating: parseInt(rep.total_ratings) > 0 ? parseInt(rep.rating_sum) / parseInt(rep.total_ratings) : 0,
+      createdAt: parseInt(rep.updated_at) || 0,
+      updatedAt: parseInt(rep.updated_at) || 0,
+      isActive: data.is_active ?? true,
+      tags: data.tags || [],
     }
   }
 
