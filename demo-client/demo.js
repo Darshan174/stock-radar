@@ -334,18 +334,38 @@ if (REGISTRY_PRIVATE_KEY) {
     const regAccount = Account.fromPrivateKey({ privateKey: regPrivateKey })
     const agentAddress = regAccount.accountAddress.toString()
 
-    const repTx = await aptos.transaction.build.simple({
-      sender: regAccount.accountAddress,
-      data: {
-        function: `${REGISTRY_ADDRESS}::minimal_registry::update_reputation`,
-        functionArguments: [agentAddress, true, 100, 0],
-      },
-    })
-
-    const repPending = await aptos.signAndSubmitTransaction({
-      signer: regAccount,
-      transaction: repTx,
-    })
+    // Use a retry mechanism for transient sequence number issues
+    let repPending
+    let retries = 3
+    while (retries > 0) {
+      try {
+        // Build fresh transaction (gets latest sequence number from chain)
+        const repTx = await aptos.transaction.build.simple({
+          sender: regAccount.accountAddress,
+          data: {
+            function: `${REGISTRY_ADDRESS}::minimal_registry::update_reputation`,
+            functionArguments: [agentAddress, true, 100, 0],
+          },
+        })
+        
+        // Sign and submit
+        repPending = await aptos.signAndSubmitTransaction({
+          signer: regAccount,
+          transaction: repTx,
+        })
+        break // Success, exit retry loop
+      } catch (txErr) {
+        retries--
+        const isSeqError = txErr.message?.includes("SEQUENCE_NUMBER_TOO_OLD") || 
+                           txErr.message?.includes("vm_error_code\":3")
+        if (isSeqError && retries > 0) {
+          console.log("   → Sequence number stale, retrying...")
+          await sleep(1000) // Wait longer for chain state to settle
+        } else {
+          throw txErr
+        }
+      }
+    }
 
     await aptos.waitForTransaction({ transactionHash: repPending.hash })
     printSuccess("Reputation updated on-chain!")
