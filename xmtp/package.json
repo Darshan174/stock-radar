@@ -1,0 +1,14 @@
+{
+  "name": "xmtp-agent-messenger",
+  "version": "1.0.0",
+  "description": "XMTP Agent-to-Agent Messenger for x402",
+  "main": "xmtp-agent.js",
+  "scripts": {
+    "start": "node xmtp-agent.js",
+    "example": "node examples/agent-client-example.js"
+  },
+  "dependencies": {
+    "@xmtp/xmtp-js": "^11.0.0",
+    "ethers": "^6.8.0"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "stock-radar-x402-demo",
+  "version": "1.0.0",
+  "description": "Demo client for Stock-Radar x402 API",
+  "type": "module",
+  "scripts": {
+    "demo": "node demo.js"
+  },
+  "dependencies": {
+    "@aptos-labs/ts-sdk": "^1.33.0",
+    "dotenv": "^16.4.5"
+  }
+}

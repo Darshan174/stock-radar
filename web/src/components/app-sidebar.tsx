@@ -10,6 +10,8 @@ import {
     Settings,
     LineChart,
     MessageSquare,
+    CreditCard,
+    Search,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -20,6 +22,7 @@ const navItems = [
     { href: "/signals", label: "Signals", icon: Zap },
     { href: "/chat", label: "AI Chat", icon: MessageSquare },
     { href: "/usage", label: "API Usage", icon: BarChart3 },
+    { href: "/x402-demo", label: "x402 Demo", icon: CreditCard },
     { href: "/settings", label: "Settings", icon: Settings },
 ]
 

@@ -1,0 +1,16 @@
+[package]
+name = "AgentRegistry"
+version = "1.0.0"
+authors = ["Stock-Radar Team"]
+license = "MIT"
+
+[addresses]
+agent_registry = "0x7f10a07e484263ee7f4debd27a8adac2b918b7f3969ee79d3b6da636c3666240"
+
+[dev-addresses]
+agent_registry = "0x123"
+
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-framework.git"
+rev = "mainnet"
+subdir = "aptos-framework"

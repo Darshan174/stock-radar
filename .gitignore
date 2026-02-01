@@ -1,8 +1,12 @@
 # Environment files (contain secrets)
 .env
-.env.example
 .env.local
-.env.*
+.env.*.local
+!.env.example
+demo-client/.env
+
+# Aptos CLI config (contains deployer private key)
+move-agent-registry/.aptos/
 
 # Python
 __pycache__/
@@ -19,12 +23,19 @@ dist/
 venv/
 ENV/
 
-# IDE
+# IDE & tools
 .idea/
 .vscode/
 *.swp
 *.swo
 .DS_Store
+.qodo/
+.zencoder/
+.zenflow/
+.conductor/
+
+# Dependencies
+node_modules/
 
 # Logs
 *.log

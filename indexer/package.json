@@ -1,0 +1,17 @@
+{
+  "name": "bazaar-indexer",
+  "version": "1.0.0",
+  "description": "Minimal Bazaar Indexer Service for x402 Agent Registry",
+  "main": "minimal-indexer.js",
+  "scripts": {
+    "start": "node minimal-indexer.js",
+    "dev": "nodemon minimal-indexer.js"
+  },
+  "dependencies": {
+    "@aptos-labs/ts-sdk": "^1.33.1",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
