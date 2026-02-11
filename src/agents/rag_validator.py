@@ -93,7 +93,7 @@ class RAGValidator:
         "longterm": 168,   # 7 days for longterm
     }
     
-    def __init__(self, llm_model: str = "groq/llama-3.3-70b-versatile"):
+    def __init__(self, llm_model: str = "zai/glm-4.7"):
         """
         Initialize RAG validator.
         

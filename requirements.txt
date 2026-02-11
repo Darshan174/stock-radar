@@ -32,6 +32,16 @@ supabase>=2.0.0               # Supabase client for PostgreSQL + pgvector
 slack-sdk>=3.0.0              # Slack notifications
 
 # -----------------------------------------------------------------------------
+# Production AI Engineering (NEW)
+# -----------------------------------------------------------------------------
+pydantic>=2.0.0               # Type-safe data validation
+pydantic-settings>=2.0.0      # Environment-based config management
+structlog>=24.0.0             # Structured JSON logging
+prometheus-client>=0.20.0     # Prometheus metrics collection
+tenacity>=8.0.0               # Retry with exponential backoff
+redis>=5.0.0                  # Redis cache (optional, falls back to in-memory)
+
+# -----------------------------------------------------------------------------
 # Optional - for advanced features
 # -----------------------------------------------------------------------------
 # ta>=0.10.0                  # Technical analysis indicators (alternative)

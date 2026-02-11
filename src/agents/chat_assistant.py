@@ -66,7 +66,7 @@ class StockChatAssistant:
 
     # LLM model fallback chain
     MODELS = [
-        "groq/llama-3.3-70b-versatile",
+        "zai/glm-4.7",
         "gemini/gemini-2.0-flash",
         "ollama/mistral",
     ]
@@ -94,7 +94,7 @@ Use this context to provide informed, data-backed responses."""
         self,
         storage: Optional[StockStorage] = None,
         retriever: Optional[RAGRetriever] = None,
-        groq_key: Optional[str] = None,
+        zai_key: Optional[str] = None,
         gemini_key: Optional[str] = None
     ):
         """
@@ -103,24 +103,26 @@ Use this context to provide informed, data-backed responses."""
         Args:
             storage: StockStorage instance
             retriever: RAGRetriever instance
-            groq_key: Groq API key
+            zai_key: Zhipu AI (Z.AI) API key for GLM-4.7
             gemini_key: Gemini API key
         """
         self.storage = storage or StockStorage()
         self.retriever = retriever or RAGRetriever(storage=self.storage)
 
         # Configure API keys
-        self.groq_key = groq_key or os.getenv("GROQ_API_KEY")
+        self.zai_key = zai_key or os.getenv("ZAI_API_KEY")
         self.gemini_key = gemini_key or os.getenv("GEMINI_API_KEY")
 
-        if self.groq_key:
-            os.environ["GROQ_API_KEY"] = self.groq_key
+        if self.zai_key:
+            os.environ["ZAI_API_KEY"] = self.zai_key
+            if not os.getenv("ZAI_API_BASE"):
+                os.environ["ZAI_API_BASE"] = "https://open.bigmodel.cn/api/coding/paas/v4"
         if self.gemini_key:
             os.environ["GEMINI_API_KEY"] = self.gemini_key
 
         # Build available models list
         self.available_models = []
-        if self.groq_key:
+        if self.zai_key:
             self.available_models.append(self.MODELS[0])
         if self.gemini_key:
             self.available_models.append(self.MODELS[1])

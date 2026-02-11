@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # API service limits
 API_LIMITS = {
-    "groq": {"limit": 14400, "period": "daily", "unit": "requests"},
+    "zai": {"limit": 10000, "period": "daily", "unit": "requests"},
     "gemini": {"limit": 1500, "period": "daily", "unit": "requests"},
     "cohere": {"limit": 1000, "period": "monthly", "unit": "embeds"},
     "finnhub": {"limit": 30000, "period": "daily", "unit": "calls"},
@@ -135,7 +135,7 @@ class UsageTracker:
         Track API usage for a service.
 
         Args:
-            service: Service name (groq, gemini, cohere, finnhub, ollama)
+            service: Service name (zai, gemini, cohere, finnhub, ollama)
             count: Number of API calls made
             tokens: Number of tokens used (for LLMs)
 
