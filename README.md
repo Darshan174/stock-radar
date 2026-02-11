@@ -4,19 +4,6 @@
 
 No accounts. No subscriptions. Just micropayments.
 
-PUBLIC URL OF THE PROJECT: https://reproductive-but-expression-anyway.trycloudflare.com/x402-demo
-
-UI DEMO:
-
-https://github.com/user-attachments/assets/f4e913ec-3426-4594-afa5-7a2230d14346
-
-
-
-CLI DASHBOARD DEMO:
-
-https://github.com/user-attachments/assets/dec2ede4-12a5-4142-9537-957fb0d22c67
-
-
 ---
 
 ## What Is This
