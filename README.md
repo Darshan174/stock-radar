@@ -180,7 +180,7 @@ node scripts/register-agent.js
 | Frontend | Next.js 15, React 19, Tailwind CSS 4, Radix UI |
 | Blockchain | Aptos testnet, Move language |
 | Wallet | Petra (AIP-62), @aptos-labs/ts-sdk |
-| AI/LLM | Groq (llama-3.3-70b), Gemini fallback |
+| AI/LLM | Zhipu AI (GLM-4.7), Gemini fallback |
 | Database | Supabase (PostgreSQL) |
 | Messaging | XMTP protocol over HTTP |
 

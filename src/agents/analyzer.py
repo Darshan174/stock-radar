@@ -91,19 +91,19 @@ class AlgoPrediction:
 class StockAnalyzer:
     """
     AI-powered stock analyzer using LiteLLM.
-    Fallback chain: Ollama GLM-4 (free) -> Gemini (quality) -> Ollama Mistral (backup)
+    Fallback chain: ZAI GLM-4.7 (primary) -> Gemini (quality) -> Ollama Mistral (backup)
     """
 
     # Model fallback chain
     MODELS = [
-        "groq/llama-3.3-70b-versatile",       # Primary - Groq cloud (fast, free tier)
+        "zai/glm-4.7",                       # Primary - Zhipu AI GLM-4.7 (200K context)
         "gemini/gemini-2.0-flash",            # Secondary - Google's fast model
         "ollama/mistral",                     # Backup - local (only if cloud fails)
     ]
 
     def __init__(
         self,
-        groq_key: Optional[str] = None,
+        zai_key: Optional[str] = None,
         gemini_key: Optional[str] = None,
         ollama_url: Optional[str] = None,
         enable_rag: bool = True
@@ -112,28 +112,31 @@ class StockAnalyzer:
         Initialize stock analyzer with API keys.
 
         Args:
-            groq_key: Groq API key (optional, not used as primary anymore)
+            zai_key: Zhipu AI (Z.AI) API key for GLM-4.7
             gemini_key: Google Gemini API key
             ollama_url: Ollama API URL for local models
             enable_rag: Whether to enable RAG context retrieval for enhanced analysis
         """
         # Set API keys
-        self.groq_key = groq_key or os.getenv("GROQ_API_KEY")
+        self.zai_key = zai_key or os.getenv("ZAI_API_KEY")
         self.gemini_key = gemini_key or os.getenv("GEMINI_API_KEY")
         self.ollama_url = ollama_url or os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 
         # Configure LiteLLM
-        if self.groq_key:
-            os.environ["GROQ_API_KEY"] = self.groq_key
+        if self.zai_key:
+            os.environ["ZAI_API_KEY"] = self.zai_key
+            # Coding Plan uses a different endpoint than the regular API
+            if not os.getenv("ZAI_API_BASE"):
+                os.environ["ZAI_API_BASE"] = "https://open.bigmodel.cn/api/coding/paas/v4"
         if self.gemini_key:
             os.environ["GEMINI_API_KEY"] = self.gemini_key
 
-        # Build available models list - Groq is primary (cloud, fast)
+        # Build available models list - ZAI GLM-4.7 is primary
         self.available_models = []
 
-        # Primary: Groq (cloud, fast, free tier)
-        if self.groq_key:
-            self.available_models.append(self.MODELS[0])  # groq/llama-3.3-70b-versatile
+        # Primary: ZAI GLM-4.7 (cloud, 200K context)
+        if self.zai_key:
+            self.available_models.append(self.MODELS[0])  # zai/glm-4.7
 
         # Secondary: Gemini (if key available)
         if self.gemini_key:
@@ -208,7 +211,7 @@ class StockAnalyzer:
                     logger.debug(f"Token usage details: {usage}")
 
                 # Track usage
-                service = model.split("/")[0]  # Extract provider: groq, gemini, ollama
+                service = model.split("/")[0]  # Extract provider: zai, gemini, ollama
                 get_tracker().track(service, count=1, tokens=tokens)
 
                 logger.info(f"Success with {model} ({tokens} tokens)")
