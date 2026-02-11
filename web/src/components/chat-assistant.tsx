@@ -410,7 +410,7 @@ export function ChatAssistant({
                 </Button>
               </div>
             </CardHeader>
-            <ChatContent />
+            {ChatContent()}
           </Card>
         )}
       </>
@@ -437,7 +437,7 @@ export function ChatAssistant({
         </div>
       </CardHeader>
       <CardContent className="flex-1 flex flex-col p-0 overflow-hidden">
-        <ChatContent />
+        {ChatContent()}
       </CardContent>
     </Card>
   )

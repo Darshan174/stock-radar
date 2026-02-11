@@ -111,7 +111,7 @@ function ChartLegend({
   if (!ohlc) return null
 
   const isUp = ohlc.c >= ohlc.o
-  const changeColor = isUp ? "#00E676" : "#FF1744"
+  const changeColor = isUp ? "#26a69a" : "#ef5350"
 
   return (
     <div className="absolute top-3 left-14 z-10 flex flex-wrap items-center gap-4 text-sm font-mono max-w-[calc(100%-120px)]">
@@ -119,10 +119,10 @@ function ChartLegend({
         O <span className="text-foreground font-medium">{currency}{ohlc.o.toFixed(2)}</span>
       </span>
       <span className="text-muted-foreground">
-        H <span className="text-[#00E676] font-medium">{currency}{ohlc.h.toFixed(2)}</span>
+        H <span className="text-[#26a69a] font-medium">{currency}{ohlc.h.toFixed(2)}</span>
       </span>
       <span className="text-muted-foreground">
-        L <span className="text-[#FF1744] font-medium">{currency}{ohlc.l.toFixed(2)}</span>
+        L <span className="text-[#ef5350] font-medium">{currency}{ohlc.l.toFixed(2)}</span>
       </span>
       <span className="text-muted-foreground">
         C <span style={{ color: changeColor }} className="font-medium">{currency}{ohlc.c.toFixed(2)}</span>
@@ -225,7 +225,7 @@ export function CandlestickChart({
     const volumes = data.map((d) => ({
       time: d.time as Time,
       value: d.volume || 0,
-      color: d.close >= d.open ? "rgba(38, 166, 154, 0.6)" : "rgba(239, 83, 80, 0.6)",
+      color: d.close >= d.open ? "rgba(38, 166, 154, 0.4)" : "rgba(239, 83, 80, 0.4)",
     }))
 
     // Baseline value - use first close price
@@ -403,12 +403,12 @@ export function CandlestickChart({
     switch (chartType) {
       case "candlestick":
         mainSeries = chart.addSeries(CandlestickSeries, {
-          upColor: "#00E676",
-          downColor: "#FF1744",
-          borderUpColor: "#00E676",
-          borderDownColor: "#FF1744",
-          wickUpColor: "#00E676",
-          wickDownColor: "#FF1744",
+          upColor: "#26a69a",
+          downColor: "#ef5350",
+          borderUpColor: "#26a69a",
+          borderDownColor: "#ef5350",
+          wickUpColor: "#26a69a",
+          wickDownColor: "#ef5350",
           borderVisible: false,
         })
         mainSeries.setData(chartData.candles)
@@ -417,11 +417,11 @@ export function CandlestickChart({
       case "hollowCandles":
         mainSeries = chart.addSeries(CandlestickSeries, {
           upColor: "transparent",
-          downColor: "#FF1744",
-          borderUpColor: "#00E676",
-          borderDownColor: "#FF1744",
-          wickUpColor: "#00E676",
-          wickDownColor: "#FF1744",
+          downColor: "#ef5350",
+          borderUpColor: "#26a69a",
+          borderDownColor: "#ef5350",
+          wickUpColor: "#26a69a",
+          wickDownColor: "#ef5350",
           borderVisible: true,
         })
         mainSeries.setData(chartData.candles)
@@ -429,8 +429,8 @@ export function CandlestickChart({
 
       case "bars":
         mainSeries = chart.addSeries(BarSeries, {
-          upColor: "#00E676",
-          downColor: "#FF1744",
+          upColor: "#26a69a",
+          downColor: "#ef5350",
           openVisible: true,
           thinBars: false,
         })
@@ -439,12 +439,12 @@ export function CandlestickChart({
 
       case "heikinAshi":
         mainSeries = chart.addSeries(CandlestickSeries, {
-          upColor: "#00E676",
-          downColor: "#FF1744",
-          borderUpColor: "#00E676",
-          borderDownColor: "#FF1744",
-          wickUpColor: "#00E676",
-          wickDownColor: "#FF1744",
+          upColor: "#26a69a",
+          downColor: "#ef5350",
+          borderUpColor: "#26a69a",
+          borderDownColor: "#ef5350",
+          wickUpColor: "#26a69a",
+          wickDownColor: "#ef5350",
           borderVisible: false,
         })
         mainSeries.setData(chartData.heikinAshi)
@@ -485,12 +485,12 @@ export function CandlestickChart({
       case "baseline":
         mainSeries = chart.addSeries(BaselineSeries, {
           baseValue: { type: "price", price: chartData.baselineValue },
-          topLineColor: "#00E676",
-          topFillColor1: "rgba(0, 230, 118, 0.2)",
-          topFillColor2: "rgba(0, 230, 118, 0.0)",
-          bottomLineColor: "#FF1744",
-          bottomFillColor1: "rgba(255, 23, 68, 0.0)",
-          bottomFillColor2: "rgba(255, 23, 68, 0.2)",
+          topLineColor: "#26a69a",
+          topFillColor1: "rgba(38, 166, 154, 0.2)",
+          topFillColor2: "rgba(38, 166, 154, 0.0)",
+          bottomLineColor: "#ef5350",
+          bottomFillColor1: "rgba(239, 83, 80, 0.0)",
+          bottomFillColor2: "rgba(239, 83, 80, 0.2)",
           lineWidth: 2,
         })
         mainSeries.setData(chartData.lineData)
@@ -498,12 +498,12 @@ export function CandlestickChart({
 
       default:
         mainSeries = chart.addSeries(CandlestickSeries, {
-          upColor: "#00E676",
-          downColor: "#FF1744",
-          borderUpColor: "#00E676",
-          borderDownColor: "#FF1744",
-          wickUpColor: "#00E676",
-          wickDownColor: "#FF1744",
+          upColor: "#26a69a",
+          downColor: "#ef5350",
+          borderUpColor: "#26a69a",
+          borderDownColor: "#ef5350",
+          wickUpColor: "#26a69a",
+          wickDownColor: "#ef5350",
           borderVisible: false,
         })
         mainSeries.setData(chartData.candles)
