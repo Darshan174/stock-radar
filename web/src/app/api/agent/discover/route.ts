@@ -171,7 +171,7 @@ export async function GET(request: NextRequest) {
     
     // AI Models Used
     aiModels: {
-      primary: "groq/llama-3.3-70b-versatile",
+      primary: "zai/glm-4.7",
       fallback: ["gemini/gemini-2.0-flash", "ollama/mistral"],
       scoringMethod: "algorithmic",
     },

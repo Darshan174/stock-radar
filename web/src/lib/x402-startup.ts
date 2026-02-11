@@ -60,14 +60,14 @@ export function validateX402Config(): {
   }
 
   // Check AI model API keys
-  const hasGroq = !!process.env.GROQ_API_KEY
+  const hasZai = !!process.env.ZAI_API_KEY
   const hasGemini = !!process.env.GEMINI_API_KEY
-  
-  if (!hasGroq && !hasGemini) {
-    warnings.push("No AI API keys configured (GROQ_API_KEY or GEMINI_API_KEY). AI analysis will fall back to local Ollama.")
+
+  if (!hasZai && !hasGemini) {
+    warnings.push("No AI API keys configured (ZAI_API_KEY or GEMINI_API_KEY). AI analysis will fall back to local Ollama.")
   } else {
     const providers = []
-    if (hasGroq) providers.push("Groq")
+    if (hasZai) providers.push("ZAI (GLM-4.7)")
     if (hasGemini) providers.push("Gemini")
     info.push(`AI providers available: ${providers.join(", ")}`)
   }

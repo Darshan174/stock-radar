@@ -22,7 +22,7 @@ interface UsageResponse {
 }
 
 const serviceInfo: Record<string, { name: string; description: string; icon: string }> = {
-  groq: { name: "Groq", description: "Primary LLM (Llama 3.3 70B)", icon: "🚀" },
+  zai: { name: "ZAI (GLM-4.7)", description: "Primary LLM (GLM-4.7 200K)", icon: "🚀" },
   gemini: { name: "Gemini", description: "Backup LLM (Gemini 2.5 Pro)", icon: "✨" },
   cohere: { name: "Cohere", description: "News embeddings", icon: "📰" },
   finnhub: { name: "Finnhub", description: "Stock news & data", icon: "📊" },
@@ -147,7 +147,7 @@ export default function UsagePage() {
               <div>
                 <p className="text-sm text-muted-foreground">Last Reset</p>
                 <p className="text-2xl font-bold">
-                  {formatTimeAgo(usage?.services?.groq?.last_reset || null)}
+                  {formatTimeAgo(usage?.services?.zai?.last_reset || null)}
                 </p>
               </div>
             </div>

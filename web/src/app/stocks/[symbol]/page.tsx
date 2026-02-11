@@ -30,6 +30,10 @@ import {
   ShieldAlert,
   BarChart3,
   Cpu,
+  ChevronDown,
+  ChevronUp,
+  Brain,
+  Database,
 } from "lucide-react"
 import { RAGBadge } from "@/components/rag-badge"
 import { supabase, Stock, Analysis, PriceHistory } from "@/lib/supabase"
@@ -86,6 +90,8 @@ export default function StockDetailPage() {
   const [chartMode, setChartMode] = useState<"daily" | "intraday">("daily")
   const [timeInterval, setTimeInterval] = useState("5m")
   const [intradayData, setIntradayData] = useState<any[]>([])
+  const [aiPanelOpen, setAiPanelOpen] = useState(false)
+  const [ragPanelOpen, setRagPanelOpen] = useState(false)
 
   useEffect(() => {
     async function fetchStockData() {
@@ -360,24 +366,73 @@ export default function StockDetailPage() {
         </div>
       </div>
 
-      {/* AI Analysis Panel */}
-      <div className="mb-6">
-        <AIAnalysisPanel
-          analysis={latestAnalysis}
-          currentPrice={stock.latest_price}
-          currency={stock.currency === "INR" ? "₹" : "$"}
-          onRunAnalysis={handleAnalyze}
-          isAnalyzing={analyzing}
-        />
+      {/* AI Analysis Panel - Collapsible */}
+      <div className="mb-4">
+        <button
+          onClick={() => setAiPanelOpen(!aiPanelOpen)}
+          className="w-full flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <Brain className="h-4 w-4 text-purple-500" />
+            <span className="font-medium text-sm">AI Analysis</span>
+            {latestAnalysis && (
+              <>
+                <Badge variant="outline" className={getSignalColor(latestAnalysis.signal)}>
+                  {latestAnalysis.signal.toUpperCase()}
+                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  {Math.round(latestAnalysis.confidence * 100)}% confidence
+                </span>
+              </>
+            )}
+          </div>
+          {aiPanelOpen ? (
+            <ChevronUp className="h-4 w-4 text-muted-foreground" />
+          ) : (
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          )}
+        </button>
+        {aiPanelOpen && (
+          <div className="mt-2">
+            <AIAnalysisPanel
+              analysis={latestAnalysis}
+              currentPrice={stock.latest_price}
+              currency={stock.currency === "INR" ? "₹" : "$"}
+              onRunAnalysis={handleAnalyze}
+              isAnalyzing={analyzing}
+            />
+          </div>
+        )}
       </div>
 
-      {/* RAG Insights Panel */}
-      <div className="mb-6">
-        <RAGInsightsPanel
-          symbol={stock.symbol}
-          defaultExpanded={true}
-          autoRefresh={false}
-        />
+      {/* RAG Insights Panel - Collapsible */}
+      <div className="mb-4">
+        <button
+          onClick={() => setRagPanelOpen(!ragPanelOpen)}
+          className="w-full flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <Database className="h-4 w-4 text-blue-500" />
+            <span className="font-medium text-sm">RAG Insights</span>
+            <Badge variant="outline" className="text-xs">
+              {stock.symbol}
+            </Badge>
+          </div>
+          {ragPanelOpen ? (
+            <ChevronUp className="h-4 w-4 text-muted-foreground" />
+          ) : (
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          )}
+        </button>
+        {ragPanelOpen && (
+          <div className="mt-2">
+            <RAGInsightsPanel
+              symbol={stock.symbol}
+              defaultExpanded={true}
+              autoRefresh={false}
+            />
+          </div>
+        )}
       </div>
 
       {/* Chart */}
@@ -460,11 +515,11 @@ export default function StockDetailPage() {
                 key={`${symbol}-intraday-${timeInterval}`}
                 data={intradayData}
                 signals={[]}
-                height={500}
+                height={700}
                 currency={stock.currency === "INR" ? "₹" : "$"}
               />
             ) : (
-              <div className="h-[500px] flex items-center justify-center text-muted-foreground bg-background">
+              <div className="h-[700px] flex items-center justify-center text-muted-foreground bg-background">
                 Loading intraday data...
               </div>
             )
@@ -473,11 +528,11 @@ export default function StockDetailPage() {
               key={`${symbol}-${period}`}
               data={chartData}
               signals={signals}
-              height={500}
+              height={700}
               currency={stock.currency === "INR" ? "₹" : "$"}
             />
           ) : (
-            <div className="h-[500px] flex items-center justify-center text-muted-foreground bg-background">
+            <div className="h-[700px] flex items-center justify-center text-muted-foreground bg-background">
               Run an analysis to fetch price data
             </div>
           )}

@@ -5,7 +5,7 @@ import os from "os"
 
 // API limits configuration (should match usage_tracker.py)
 const API_LIMITS: Record<string, { limit: number | null; period: string; unit: string }> = {
-  groq: { limit: 14400, period: "daily", unit: "requests" },
+  zai: { limit: 10000, period: "daily", unit: "requests" },
   gemini: { limit: 1500, period: "daily", unit: "requests" },
   cohere: { limit: 1000, period: "monthly", unit: "embeds" },
   finnhub: { limit: 30000, period: "daily", unit: "calls" },
