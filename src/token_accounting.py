@@ -16,7 +16,7 @@ USAGE:
 
     # Record an LLM call
     accountant.record_llm_call(
-        model="zai/glm-4.7",
+        model="zai/glm-5",
         tokens_in=1200,
         tokens_out=350,
         latency_sec=1.2,
@@ -26,7 +26,7 @@ USAGE:
     meta = accountant.get_request_meta()
     # Returns: {
     #   "tokens_in": 1200, "tokens_out": 350, "total_tokens": 1550,
-    #   "cost_usd": 0.004, "model_used": "zai/glm-4.7",
+    #   "cost_usd": 0.004, "model_used": "zai/glm-5",
     #   "latency_sec": 1.2, "data_sources_used": ["twelvedata", "finnhub"]
     # }
 """
@@ -48,9 +48,8 @@ from metrics import (
 
 # Cost rates per 1K tokens (update as pricing changes)
 MODEL_COSTS: dict[str, dict[str, float]] = {
-    "zai/glm-4.7": {"input": 0.0007, "output": 0.0007},
-    "gemini/gemini-2.0-flash": {"input": 0.0, "output": 0.0},  # Free tier
-    "ollama/mistral": {"input": 0.0, "output": 0.0},  # Local = free
+    "openai/glm-4.7": {"input": 0.0007, "output": 0.0007},
+    "gemini/gemini-2.5-flash": {"input": 0.0, "output": 0.0},  # Free tier
 }
 
 

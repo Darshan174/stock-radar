@@ -9,13 +9,13 @@ async function handleLivePrice(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Symbol is required" }, { status: 400 })
   }
 
-  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d`
+  const yahooUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d`
 
   const response = await fetch(yahooUrl, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     },
-    next: { revalidate: 5 },
+    cache: "no-store",
   })
 
   if (!response.ok) {

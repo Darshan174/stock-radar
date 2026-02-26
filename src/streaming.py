@@ -43,6 +43,7 @@ USAGE (Next.js API route):
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import Any, AsyncGenerator, Generator
 
@@ -78,7 +79,7 @@ def stream_llm_response(
             from config import settings
             models = settings.fallback_models
         except Exception:
-            models = ["zai/glm-4.7", "ollama/mistral"]
+            models = ["openai/glm-4.7", "gemini/gemini-2.5-flash"]
 
     messages = []
     if system_prompt:
@@ -99,14 +100,23 @@ def stream_llm_response(
                 "model": model,
             }
 
-            # Use litellm streaming
-            response = litellm.completion(
+            # Build kwargs, adding api_base/api_key for ZAI (OpenAI-compatible)
+            kwargs = dict(
                 model=model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=True,
             )
+            if model.startswith("openai/"):
+                zai_key = os.getenv("ZAI_API_KEY")
+                zai_base = os.getenv("ZAI_API_BASE", "https://open.bigmodel.cn/api/coding/paas/v4")
+                if zai_key:
+                    kwargs["api_base"] = zai_base
+                    kwargs["api_key"] = zai_key
+
+            # Use litellm streaming
+            response = litellm.completion(**kwargs)
 
             for chunk in response:
                 delta = chunk.choices[0].delta

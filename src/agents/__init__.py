@@ -3,7 +3,7 @@
 Core agents for stock market analysis:
 - fetcher: Yahoo Finance stock data fetching
 - storage: Supabase persistence with Cohere embeddings
-- analyzer: LiteLLM-powered analysis (Groq -> Gemini -> Ollama)
+- analyzer: LiteLLM-powered analysis (ZAI GLM-4.7 -> Gemini)
 - alerts: Slack & Telegram notifications
 """
 

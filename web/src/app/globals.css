@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -156,4 +157,17 @@
 .uplot .u-select {
   background: rgba(38, 166, 154, 0.1);
   border: 1px solid rgba(38, 166, 154, 0.3);
+}
+
+@keyframes stockradar-live-dot-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.stockradar-live-dot {
+  animation: stockradar-live-dot-pulse 1.35s ease-in-out infinite;
 }

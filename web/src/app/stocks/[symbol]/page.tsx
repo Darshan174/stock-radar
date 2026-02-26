@@ -1,18 +1,11 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState, type ComponentProps } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { CandlestickChart } from "@/components/charts"
 import { AIAnalysisPanel } from "@/components/ai-analysis-panel"
 import { StockInfoPanel } from "@/components/stock-info-panel"
@@ -36,32 +29,51 @@ import {
   Database,
 } from "lucide-react"
 import { RAGBadge } from "@/components/rag-badge"
-import { supabase, Stock, Analysis, PriceHistory } from "@/lib/supabase"
+import { supabase, Stock, Analysis } from "@/lib/supabase"
+import { useLiveStockData } from "@/hooks/use-live-stock-data"
 
 interface StockDetail extends Stock {
-  price_history: PriceHistory[]
   analyses: Analysis[]
-  latest_price?: number
-  price_change?: number
+}
+
+interface ChartCandle {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume?: number
+}
+
+interface ChartMeta {
+  isIntraday: boolean
+  interval: string
+  exchangeTimezoneName: string
+}
+
+interface LiveLineTick {
+  time: number
+  value: number
+}
+
+type StockInfoFundamentals = ComponentProps<typeof StockInfoPanel>["fundamentals"]
+type AdvancedPanelFundamentals = ComponentProps<typeof AdvancedChartsPanel>["fundamentals"]
+type AdvancedPanelPrediction = ComponentProps<typeof AdvancedChartsPanel>["aiPrediction"]
+
+interface AnalysisWithAlgo extends Analysis {
+  algo_prediction?: AdvancedPanelPrediction
 }
 
 const PERIOD_OPTIONS = [
-  { value: "21", label: "21 Days" },
-  { value: "30", label: "1 Month" },
-  { value: "90", label: "3 Months" },
-  { value: "180", label: "6 Months" },
-  { value: "365", label: "1 Year" },
-  { value: "730", label: "2 Years" },
-  { value: "all", label: "All Time" },
-]
-
-// Interval options for intraday charts
-const INTERVAL_OPTIONS = [
-  { value: "5m", label: "5M", range: "1d" },
-  { value: "15m", label: "15M", range: "5d" },
-  { value: "1h", label: "1H", range: "5d" },
-  { value: "4h", label: "4H", range: "1mo" },
-  { value: "1d", label: "1D", range: "1mo" },
+  { value: "1d", label: "1D" },
+  { value: "1w", label: "1W" },
+  { value: "1m", label: "1M" },
+  { value: "3m", label: "3M" },
+  { value: "6m", label: "6M" },
+  { value: "1y", label: "1Y" },
+  { value: "3y", label: "3Y" },
+  { value: "5y", label: "5Y" },
+  { value: "all", label: "All" },
 ]
 
 function getSignalColor(signal: string) {
@@ -83,20 +95,25 @@ export default function StockDetailPage() {
   const symbol = params.symbol as string
 
   const [stock, setStock] = useState<StockDetail | null>(null)
-  const [fundamentals, setFundamentals] = useState<Record<string, any> | null>(null)
+  const [fundamentals, setFundamentals] = useState<StockInfoFundamentals | null>(null)
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
-  const [period, setPeriod] = useState("90")
-  const [chartMode, setChartMode] = useState<"daily" | "intraday">("daily")
-  const [timeInterval, setTimeInterval] = useState("5m")
-  const [intradayData, setIntradayData] = useState<any[]>([])
+  const [period, setPeriod] = useState("1d")
+  const [chartData, setChartData] = useState<ChartCandle[]>([])
+  const [chartMeta, setChartMeta] = useState<ChartMeta>({
+    isIntraday: false,
+    interval: "1d",
+    exchangeTimezoneName: "UTC",
+  })
+  const [liveLineTicks, setLiveLineTicks] = useState<LiveLineTick[]>([])
+  const [chartLoading, setChartLoading] = useState(true)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [ragPanelOpen, setRagPanelOpen] = useState(false)
 
+  // Fetch stock info + analyses from Supabase
   useEffect(() => {
-    async function fetchStockData() {
+    async function fetchStockInfo() {
       try {
-        // Fetch stock info
         const { data: stockData } = await supabase
           .from("stocks")
           .select("*")
@@ -108,35 +125,6 @@ export default function StockDetailPage() {
           return
         }
 
-        // Calculate date range based on period
-        let priceHistory: any[] = []
-
-        if (period === "all") {
-          // For "All Time", fetch newest 2000 records (ordered desc), then reverse for chart
-          const { data } = await supabase
-            .from("price_history")
-            .select("*")
-            .eq("stock_id", stockData.id)
-            .order("timestamp", { ascending: false })
-            .limit(2000)
-          priceHistory = data ? [...data].reverse() : []
-        } else {
-          // For specific periods, use date filter
-          const days = parseInt(period)
-          const startDate = new Date()
-          startDate.setDate(startDate.getDate() - days)
-
-          const { data } = await supabase
-            .from("price_history")
-            .select("*")
-            .eq("stock_id", stockData.id)
-            .gte("timestamp", startDate.toISOString())
-            .order("timestamp", { ascending: true })
-            .limit(1000)
-          priceHistory = data || []
-        }
-
-        // Fetch analyses
         const { data: analyses } = await supabase
           .from("analysis")
           .select("*")
@@ -144,68 +132,12 @@ export default function StockDetailPage() {
           .order("created_at", { ascending: false })
           .limit(10)
 
-        // Fetch intraday data to add/update today's candle
-        try {
-          const intradayResponse = await fetch(`/api/intraday?symbol=${symbol}`)
-          if (intradayResponse.ok) {
-            const intradayData = await intradayResponse.json()
-            if (intradayData.todayCandle) {
-              const todayCandle = intradayData.todayCandle
-              // Check if last historical candle is for today
-              if (priceHistory.length > 0) {
-                const lastDate = new Date(priceHistory[priceHistory.length - 1].timestamp).toISOString().split("T")[0]
-                const todayDate = todayCandle.time
-
-                if (lastDate === todayDate) {
-                  // Update today's candle with latest data
-                  priceHistory[priceHistory.length - 1] = {
-                    ...priceHistory[priceHistory.length - 1],
-                    open: todayCandle.open,
-                    high: todayCandle.high,
-                    low: todayCandle.low,
-                    close: todayCandle.close,
-                    volume: todayCandle.volume,
-                  }
-                } else {
-                  // Add today's candle if not present
-                  priceHistory.push({
-                    id: -1,
-                    stock_id: stockData.id,
-                    timestamp: new Date(todayCandle.time).toISOString(),
-                    open: todayCandle.open,
-                    high: todayCandle.high,
-                    low: todayCandle.low,
-                    close: todayCandle.close,
-                    volume: todayCandle.volume,
-                  })
-                }
-              }
-            }
-          }
-        } catch (intradayError) {
-          console.error("Error fetching intraday data:", intradayError)
-        }
-
-        // Calculate price change
-        let latest_price = 0
-        let price_change = 0
-        if (priceHistory && priceHistory.length > 0) {
-          latest_price = priceHistory[priceHistory.length - 1].close
-          if (priceHistory.length > 1) {
-            const prev = priceHistory[priceHistory.length - 2].close
-            price_change = prev > 0 ? ((latest_price - prev) / prev) * 100 : 0
-          }
-        }
-
         setStock({
           ...stockData,
-          price_history: priceHistory || [],
           analyses: analyses || [],
-          latest_price,
-          price_change,
         })
 
-        // Fetch fundamentals from API
+        // Fetch fundamentals
         try {
           const fundResponse = await fetch(`/api/fundamentals?symbol=${symbol}`)
           if (fundResponse.ok) {
@@ -225,40 +157,142 @@ export default function StockDetailPage() {
     }
 
     if (symbol) {
-      fetchStockData()
+      fetchStockInfo()
     }
-  }, [symbol, period])
+  }, [symbol])
 
-  // Fetch intraday data when in intraday mode
+  // Fetch chart data from Yahoo Finance (independent of analysis)
   useEffect(() => {
-    async function fetchIntradayData() {
-      if (chartMode !== "intraday" || !symbol) return
+    async function fetchChartData(options?: { background?: boolean }) {
+      if (!symbol) return
+      const background = options?.background === true
+      if (!background) {
+        setChartLoading(true)
+      }
 
       try {
-        const intervalOption = INTERVAL_OPTIONS.find(i => i.value === timeInterval)
-        const range = intervalOption?.range || "1d"
-
-        const response = await fetch(`/api/intraday?symbol=${symbol}&interval=${timeInterval}&range=${range}`)
+        const response = await fetch(
+          `/api/chart-data?symbol=${encodeURIComponent(symbol)}&period=${period}`
+        )
         if (response.ok) {
           const data = await response.json()
           if (data.candles && data.candles.length > 0) {
-            setIntradayData(data.candles)
+            setChartData(data.candles)
+            setChartMeta({
+              isIntraday: !!data.isIntraday,
+              interval: data.interval || "1d",
+              exchangeTimezoneName: data.meta?.exchangeTimezoneName || "UTC",
+            })
+          } else if (!background) {
+            setChartData([])
           }
+        } else if (!background) {
+          setChartData([])
         }
       } catch (error) {
-        console.error("Error fetching intraday data:", error)
+        console.error("Error fetching chart data:", error)
+        if (!background) {
+          setChartData([])
+        }
+      } finally {
+        if (!background) {
+          setChartLoading(false)
+        }
       }
     }
 
-    fetchIntradayData()
+    fetchChartData()
 
-    // Auto-refresh every 30 seconds when in intraday mode
-    const refreshTimer = chartMode === "intraday" ? window.setInterval(fetchIntradayData, 30000) : null
+    // Auto-refresh intraday periods
+    const isIntraday = period === "1d" || period === "1w"
+    const refreshTimer = isIntraday
+      ? window.setInterval(() => fetchChartData({ background: true }), 30000)
+      : null
 
     return () => {
       if (refreshTimer) window.clearInterval(refreshTimer)
     }
-  }, [symbol, chartMode, timeInterval])
+  }, [symbol, period])
+
+  const { livePrice } = useLiveStockData({
+    symbol,
+    enabled: !!symbol,
+    preferWebSocket: true,
+    refreshInterval: 2000,
+    updateThrottleMs: 0,
+  })
+
+  const intervalSeconds = useMemo(() => {
+    const match = chartMeta.interval.match(/^(\d+)([mhdwk])$/)
+    if (!match) return 60
+    const value = Number(match[1])
+    const unit = match[2]
+    if (unit === "m") return value * 60
+    if (unit === "h") return value * 3600
+    if (unit === "d") return value * 86400
+    if (unit === "w") return value * 7 * 86400
+    return 60
+  }, [chartMeta.interval])
+
+  useEffect(() => {
+    setLiveLineTicks([])
+  }, [symbol, period])
+
+  // Keep a short high-resolution tick trail for line mode.
+  useEffect(() => {
+    if (!livePrice) return
+    setLiveLineTicks((prev) => {
+      const last = prev[prev.length - 1]
+      if (last && Math.abs(last.value - livePrice.price) < 0.0001) {
+        return prev
+      }
+
+      let tickTime = livePrice.timestamp.getTime() / 1000
+      if (last && tickTime <= last.time) {
+        tickTime = last.time + 0.0001
+      }
+
+      const next = [...prev, { time: tickTime, value: livePrice.price }]
+      const maxPoints = 3000
+      return next.length > maxPoints ? next.slice(next.length - maxPoints) : next
+    })
+  }, [livePrice])
+
+  // Patch the last intraday candle with live ticks from websocket.
+  useEffect(() => {
+    if (!chartMeta.isIntraday || !livePrice || chartData.length === 0) return
+
+    const liveTs = Math.floor(livePrice.timestamp.getTime() / 1000)
+    const bucketTs = Math.floor(liveTs / intervalSeconds) * intervalSeconds
+
+    setChartData((prev) => {
+      if (!prev.length) return prev
+      const next = [...prev]
+      const last = next[next.length - 1]
+
+      if (bucketTs > last.time) {
+        next.push({
+          time: bucketTs,
+          open: last.close,
+          high: Math.max(last.close, livePrice.price),
+          low: Math.min(last.close, livePrice.price),
+          close: livePrice.price,
+          volume: livePrice.volume || last.volume || 0,
+        })
+        return next
+      }
+
+      const updatedLast: ChartCandle = {
+        ...last,
+        high: Math.max(last.high, livePrice.price),
+        low: Math.min(last.low, livePrice.price),
+        close: livePrice.price,
+        volume: livePrice.volume || last.volume || 0,
+      }
+      next[next.length - 1] = updatedLast
+      return next
+    })
+  }, [livePrice, chartMeta.isIntraday, intervalSeconds, chartData.length])
 
   async function handleAnalyze() {
     setAnalyzing(true)
@@ -270,7 +304,6 @@ export default function StockDetailPage() {
       })
 
       if (response.ok) {
-        // Refresh data
         window.location.reload()
       }
     } catch (error) {
@@ -279,6 +312,18 @@ export default function StockDetailPage() {
       setAnalyzing(false)
     }
   }
+
+  const signals = useMemo(
+    () =>
+      (stock?.analyses || [])
+        .filter((a) => ["buy", "strong_buy", "sell", "strong_sell"].includes(a.signal))
+        .map((a) => ({
+          time: a.created_at.split("T")[0],
+          type: a.signal.includes("buy") ? ("buy" as const) : ("sell" as const),
+          price: a.target_price || 0,
+        })),
+    [stock?.analyses]
+  )
 
   if (loading) {
     return (
@@ -310,24 +355,7 @@ export default function StockDetailPage() {
     )
   }
 
-  const latestAnalysis = stock.analyses[0]
-  const chartData = stock.price_history.map((p) => ({
-    time: p.timestamp.split("T")[0],
-    open: p.open,
-    high: p.high,
-    low: p.low,
-    close: p.close,
-    volume: p.volume,
-  }))
-
-  // Get signals for chart markers
-  const signals = stock.analyses
-    .filter((a) => ["buy", "strong_buy", "sell", "strong_sell"].includes(a.signal))
-    .map((a) => ({
-      time: a.created_at.split("T")[0],
-      type: a.signal.includes("buy") ? "buy" as const : "sell" as const,
-      price: a.target_price || 0,
-    }))
+  const latestAnalysis = stock.analyses[0] as AnalysisWithAlgo | undefined
 
   return (
     <div className="p-8">
@@ -350,10 +378,10 @@ export default function StockDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          {/* Live Price Ticker */}
           <LivePriceTicker
             symbol={stock.symbol}
-            currency={stock.currency === "INR" ? "₹" : "$"}
+            currency={stock.currency === "INR" ? "\u20B9" : "$"}
+            livePriceOverride={livePrice}
           />
           <Button onClick={handleAnalyze} disabled={analyzing}>
             {analyzing ? (
@@ -396,8 +424,8 @@ export default function StockDetailPage() {
           <div className="mt-2">
             <AIAnalysisPanel
               analysis={latestAnalysis}
-              currentPrice={stock.latest_price}
-              currency={stock.currency === "INR" ? "₹" : "$"}
+              currentPrice={chartData.length > 0 ? chartData[chartData.length - 1].close : undefined}
+              currency={stock.currency === "INR" ? "\u20B9" : "$"}
               onRunAnalysis={handleAnalyze}
               isAnalyzing={analyzing}
             />
@@ -445,95 +473,50 @@ export default function StockDetailPage() {
                 Price Chart
               </CardTitle>
               <CardDescription>
-                {chartMode === "intraday"
-                  ? `${intradayData.length} ${timeInterval} candles (auto-refreshing)`
-                  : chartData.length > 0
-                    ? `${chartData.length} days of price history`
-                    : "No price data available"}
+                {chartData.length > 0
+                  ? `${chartData.length} data points`
+                  : chartLoading
+                    ? "Loading..."
+                    : "No data available"}
               </CardDescription>
             </div>
-            <div className="flex items-center gap-2">
-              {/* Mode Toggle */}
-              <div className="flex items-center rounded-md border">
+            {/* Period Selector - Inline Buttons */}
+            <div className="flex items-center gap-1">
+              {PERIOD_OPTIONS.map((opt) => (
                 <Button
-                  variant={chartMode === "daily" ? "default" : "ghost"}
+                  key={opt.value}
+                  variant={period === opt.value ? "default" : "ghost"}
                   size="sm"
-                  className="rounded-r-none text-xs"
-                  onClick={() => setChartMode("daily")}
+                  className="text-xs h-8 px-2.5"
+                  onClick={() => setPeriod(opt.value)}
                 >
-                  Daily
+                  {opt.label}
                 </Button>
-                <Button
-                  variant={chartMode === "intraday" ? "default" : "ghost"}
-                  size="sm"
-                  className="rounded-l-none text-xs"
-                  onClick={() => setChartMode("intraday")}
-                >
-                  Intraday
-                </Button>
-              </div>
-
-              {/* Interval Selector (for intraday) */}
-              {chartMode === "intraday" && (
-                <div className="flex items-center gap-1">
-                  {INTERVAL_OPTIONS.map((opt) => (
-                    <Button
-                      key={opt.value}
-                      variant={timeInterval === opt.value ? "default" : "ghost"}
-                      size="sm"
-                      className="text-xs h-8 px-2"
-                      onClick={() => setTimeInterval(opt.value)}
-                    >
-                      {opt.label}
-                    </Button>
-                  ))}
-                </div>
-              )}
-
-              {/* Period Selector (for daily) */}
-              {chartMode === "daily" && (
-                <Select value={period} onValueChange={setPeriod}>
-                  <SelectTrigger className="w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PERIOD_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
+              ))}
             </div>
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          {chartMode === "intraday" ? (
-            intradayData.length > 0 ? (
-              <CandlestickChart
-                key={`${symbol}-intraday-${timeInterval}`}
-                data={intradayData}
-                signals={[]}
-                height={700}
-                currency={stock.currency === "INR" ? "₹" : "$"}
-              />
-            ) : (
-              <div className="h-[700px] flex items-center justify-center text-muted-foreground bg-background">
-                Loading intraday data...
-              </div>
-            )
+          {chartLoading ? (
+            <div className="h-[700px] flex items-center justify-center text-muted-foreground bg-background">
+              <Loader2 className="h-6 w-6 animate-spin mr-2" />
+              Loading chart data...
+            </div>
           ) : chartData.length > 0 ? (
             <CandlestickChart
               key={`${symbol}-${period}`}
               data={chartData}
-              signals={signals}
+              liveTicks={liveLineTicks}
+              signals={period === "1d" || period === "1w" ? [] : signals}
               height={700}
-              currency={stock.currency === "INR" ? "₹" : "$"}
+              currency={stock.currency === "INR" ? "\u20B9" : "$"}
+              isIntraday={chartMeta.isIntraday}
+              timezone={chartMeta.exchangeTimezoneName}
+              interval={chartMeta.interval}
             />
           ) : (
             <div className="h-[700px] flex items-center justify-center text-muted-foreground bg-background">
-              Run an analysis to fetch price data
+              No chart data available for this period
             </div>
           )}
         </CardContent>
@@ -543,9 +526,9 @@ export default function StockDetailPage() {
       {fundamentals && fundamentals.symbol && (
         <div className="mb-6">
           <StockInfoPanel
-            fundamentals={fundamentals as any}
-            currentPrice={stock.latest_price}
-            currency={stock.currency === "INR" ? "₹" : "$"}
+            fundamentals={fundamentals}
+            currentPrice={chartData.length > 0 ? chartData[chartData.length - 1].close : undefined}
+            currency={stock.currency === "INR" ? "\u20B9" : "$"}
           />
         </div>
       )}
@@ -553,9 +536,13 @@ export default function StockDetailPage() {
       {/* Advanced Charts & AI Algo */}
       <div className="mb-6">
         <AdvancedChartsPanel
-          fundamentals={fundamentals ? (fundamentals as any) : { symbol: stock.symbol }}
-          aiPrediction={(latestAnalysis as any)?.algo_prediction || null}
-          currency={stock.currency === "INR" ? "₹" : "$"}
+          fundamentals={
+            fundamentals
+              ? (fundamentals as unknown as AdvancedPanelFundamentals)
+              : ({ symbol: stock.symbol } as AdvancedPanelFundamentals)
+          }
+          aiPrediction={latestAnalysis?.algo_prediction || null}
+          currency={stock.currency === "INR" ? "\u20B9" : "$"}
         />
       </div>
 
@@ -577,7 +564,7 @@ export default function StockDetailPage() {
                   </div>
                   <span className="font-bold text-green-500">
                     {latestAnalysis.target_price
-                      ? `${stock.currency === "INR" ? "₹" : "$"}${latestAnalysis.target_price.toFixed(2)}`
+                      ? `${stock.currency === "INR" ? "\u20B9" : "$"}${latestAnalysis.target_price.toFixed(2)}`
                       : "N/A"}
                   </span>
                 </div>
@@ -588,7 +575,7 @@ export default function StockDetailPage() {
                   </div>
                   <span className="font-bold text-red-500">
                     {latestAnalysis.stop_loss
-                      ? `${stock.currency === "INR" ? "₹" : "$"}${latestAnalysis.stop_loss.toFixed(2)}`
+                      ? `${stock.currency === "INR" ? "\u20B9" : "$"}${latestAnalysis.stop_loss.toFixed(2)}`
                       : "N/A"}
                   </span>
                 </div>
@@ -599,7 +586,7 @@ export default function StockDetailPage() {
                   </div>
                   <span className="font-bold text-blue-500">
                     {latestAnalysis.support_level
-                      ? `${stock.currency === "INR" ? "₹" : "$"}${latestAnalysis.support_level.toFixed(2)}`
+                      ? `${stock.currency === "INR" ? "\u20B9" : "$"}${latestAnalysis.support_level.toFixed(2)}`
                       : "N/A"}
                   </span>
                 </div>
@@ -610,7 +597,7 @@ export default function StockDetailPage() {
                   </div>
                   <span className="font-bold text-purple-500">
                     {latestAnalysis.resistance_level
-                      ? `${stock.currency === "INR" ? "₹" : "$"}${latestAnalysis.resistance_level.toFixed(2)}`
+                      ? `${stock.currency === "INR" ? "\u20B9" : "$"}${latestAnalysis.resistance_level.toFixed(2)}`
                       : "N/A"}
                   </span>
                 </div>
@@ -633,7 +620,7 @@ export default function StockDetailPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {stock.analyses.slice(1).map((analysis: any) => (
+              {stock.analyses.slice(1).map((analysis) => (
                 <div
                   key={analysis.id}
                   className="flex items-center justify-between p-3 rounded-lg border"
@@ -645,7 +632,6 @@ export default function StockDetailPage() {
                     <span className="text-sm text-muted-foreground">
                       {Math.round(analysis.confidence * 100)}% confidence
                     </span>
-                    {/* Model & RAG indicators */}
                     <div className="flex items-center gap-2">
                       {analysis.llm_model && (
                         <span className="flex items-center gap-1 text-xs text-blue-400">
@@ -670,7 +656,7 @@ export default function StockDetailPage() {
         </Card>
       )}
 
-      {/* Floating Chat Assistant - Bottom Left */}
+      {/* Floating Chat Assistant */}
       <FloatingChat defaultSymbol={stock.symbol} />
     </div>
   )

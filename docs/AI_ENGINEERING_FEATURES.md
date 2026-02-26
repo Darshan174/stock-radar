@@ -39,7 +39,7 @@ from config import settings
 print(settings.zai_api_key)         # str | None
 print(settings.llm_temperature)     # float (default 0.3)
 print(settings.retry_max_attempts)  # int (default 3)
-print(settings.fallback_models)     # ["zai/glm-4.7", "gemini/...", "ollama/..."]
+print(settings.fallback_models)     # ["zai/glm-5", "gemini/...", "ollama/..."]
 ```
 
 ### How It Works
@@ -90,7 +90,7 @@ logger.info("analysis_complete",
     symbol="AAPL",
     signal="buy",
     confidence=0.85,
-    model="zai/glm-4.7",
+    model="zai/glm-5",
     latency_sec=1.2,
     tokens_used=1550,
     cost_usd=0.004
@@ -303,13 +303,13 @@ Every API response includes a `meta` block with full cost transparency:
     "tokens_out": 350,
     "total_tokens": 1550,
     "cost_usd": 0.004,
-    "model_used": "zai/glm-4.7",
+    "model_used": "zai/glm-5",
     "models_tried": 1,
     "latency_sec": 1.2,
     "data_sources_used": ["yfinance", "finnhub"],
     "llm_calls": [
       {
-        "model": "zai/glm-4.7",
+        "model": "zai/glm-5",
         "tokens_in": 1200,
         "tokens_out": 350,
         "cost_usd": 0.004,
@@ -331,7 +331,7 @@ accountant.set_mode("intraday")
 
 # Record LLM call
 accountant.record_llm_call(
-    model="zai/glm-4.7",
+    model="zai/glm-5",
     tokens_in=1200,
     tokens_out=350,
     latency_sec=1.2,
@@ -393,7 +393,7 @@ for event in stream_analysis_sse("AAPL", mode="intraday"):
 | Event Type | When | Example |
 |-----------|------|---------|
 | `status` | Data fetching phases | `{"phase": "fetching", "message": "..."}` |
-| `start` | LLM begins generating | `{"model": "zai/glm-4.7"}` |
+| `start` | LLM begins generating | `{"model": "zai/glm-5"}` |
 | `token` | Each token arrives | `{"content": "Based on"}` |
 | `fallback` | Model failed, trying next | `{"failed_model": "zai", "error": "..."}` |
 | `done` | Generation complete | `{"tokens": 350, "latency_sec": 1.2}` |

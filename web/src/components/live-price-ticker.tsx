@@ -1,6 +1,7 @@
 "use client"
 
-import { useLiveStockData } from "@/hooks/use-live-stock-data"
+import { useEffect, useState } from "react"
+import { LivePrice, useLiveStockData } from "@/hooks/use-live-stock-data"
 import { TrendingUp, TrendingDown, Wifi, WifiOff } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -8,14 +9,28 @@ interface LivePriceTickerProps {
     symbol: string
     currency?: string
     className?: string
+    livePriceOverride?: LivePrice | null
 }
 
-export function LivePriceTicker({ symbol, currency = "₹", className }: LivePriceTickerProps) {
-    const { livePrice, isConnected, error } = useLiveStockData({
+export function LivePriceTicker({
+    symbol,
+    currency = "\u20B9",
+    className,
+    livePriceOverride = null,
+}: LivePriceTickerProps) {
+    const { livePrice: hookLivePrice } = useLiveStockData({
         symbol,
-        enabled: true,
-        refreshInterval: 5000, // Update every 5 seconds
+        enabled: !livePriceOverride,
+        updateThrottleMs: 350,
     })
+
+    const livePrice = livePriceOverride || hookLivePrice
+    const [nowMs, setNowMs] = useState(() => Date.now())
+
+    useEffect(() => {
+        const timer = setInterval(() => setNowMs(Date.now()), 1000)
+        return () => clearInterval(timer)
+    }, [])
 
     if (!livePrice) {
         return (
@@ -26,19 +41,30 @@ export function LivePriceTicker({ symbol, currency = "₹", className }: LivePri
     }
 
     const isUp = livePrice.change >= 0
+    const ageSec = Math.max(0, Math.floor((nowMs - livePrice.timestamp.getTime()) / 1000))
+    const isFresh = ageSec <= 18
+    const isDelayed = ageSec > 18 && ageSec <= 120
 
     return (
         <div className={cn("flex items-center gap-3", className)}>
-            {/* Connection status */}
+            {/* Connection/data freshness status */}
             <div className="flex items-center gap-1.5">
-                {isConnected ? (
-                    <Wifi className="h-3 w-3 text-green-500" />
+                {isFresh ? (
+                    <>
+                        <Wifi className="h-3 w-3 text-green-500" />
+                        <span className="text-xs text-muted-foreground">LIVE</span>
+                    </>
+                ) : isDelayed ? (
+                    <>
+                        <Wifi className="h-3 w-3 text-amber-500" />
+                        <span className="text-xs text-muted-foreground">DELAYED</span>
+                    </>
                 ) : (
-                    <WifiOff className="h-3 w-3 text-red-500" />
+                    <>
+                        <WifiOff className="h-3 w-3 text-red-500" />
+                        <span className="text-xs text-muted-foreground">OFFLINE</span>
+                    </>
                 )}
-                <span className="text-xs text-muted-foreground">
-                    {isConnected ? "LIVE" : "OFFLINE"}
-                </span>
             </div>
 
             {/* Price display */}
@@ -60,10 +86,6 @@ export function LivePriceTicker({ symbol, currency = "₹", className }: LivePri
                 </div>
             </div>
 
-            {/* Last update time */}
-            <span className="text-xs text-muted-foreground">
-                Updated: {livePrice.timestamp.toLocaleTimeString()}
-            </span>
         </div>
     )
 }

@@ -1,6 +1,5 @@
 "use client"
 
-import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
     Tooltip,
@@ -12,12 +11,9 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuCheckboxItem,
-    DropdownMenuItem,
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
-    DropdownMenuRadioGroup,
-    DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu"
 import {
     ZoomIn,
@@ -29,30 +25,12 @@ import {
     TrendingUp,
     Minus,
     BarChart3,
-    CandlestickChart,
+    CandlestickChart as CandlestickIcon,
+    ChartLine,
 } from "lucide-react"
 
 // Chart types
-export type ChartType =
-    | "candlestick"
-    | "bars"
-    | "line"
-    | "area"
-    | "stepLine"
-    | "hollowCandles"
-    | "heikinAshi"
-    | "baseline"
-
-export const CHART_TYPES: { value: ChartType; label: string }[] = [
-    { value: "candlestick", label: "Candlestick" },
-    { value: "hollowCandles", label: "Hollow Candles" },
-    { value: "bars", label: "Bars" },
-    { value: "heikinAshi", label: "Heikin Ashi" },
-    { value: "line", label: "Line" },
-    { value: "stepLine", label: "Step Line" },
-    { value: "area", label: "Area" },
-    { value: "baseline", label: "Baseline" },
-]
+export type ChartType = "line" | "candlestick"
 
 export interface ChartIndicators {
     ema12: boolean
@@ -77,7 +55,7 @@ export interface ChartToolbarProps {
     onIndicatorChange: (key: keyof ChartIndicators, value: boolean) => void
     onAddHorizontalLine?: () => void
     chartType?: ChartType
-    onChartTypeChange?: (type: ChartType) => void
+    onToggleChartType?: () => void
 }
 
 export function ChartToolbar({
@@ -90,8 +68,8 @@ export function ChartToolbar({
     indicators,
     onIndicatorChange,
     onAddHorizontalLine,
-    chartType = "candlestick",
-    onChartTypeChange,
+    chartType,
+    onToggleChartType,
 }: ChartToolbarProps) {
     return (
         <TooltipProvider delayDuration={300}>
@@ -140,37 +118,6 @@ export function ChartToolbar({
                 </Tooltip>
 
                 <div className="w-full h-px bg-[#2a2e39] my-1" />
-
-                {/* Chart Type Selector */}
-                {onChartTypeChange && (
-                    <DropdownMenu>
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <DropdownMenuTrigger asChild>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8 text-[#787b86] hover:text-white hover:bg-[#2a2e39]"
-                                    >
-                                        <CandlestickChart className="h-4 w-4" />
-                                    </Button>
-                                </DropdownMenuTrigger>
-                            </TooltipTrigger>
-                            <TooltipContent side="right">Chart Type</TooltipContent>
-                        </Tooltip>
-                        <DropdownMenuContent side="right" align="start" className="w-40">
-                            <DropdownMenuLabel>Chart Type</DropdownMenuLabel>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuRadioGroup value={chartType} onValueChange={(v) => onChartTypeChange(v as ChartType)}>
-                                {CHART_TYPES.map((type) => (
-                                    <DropdownMenuRadioItem key={type.value} value={type.value}>
-                                        {type.label}
-                                    </DropdownMenuRadioItem>
-                                ))}
-                            </DropdownMenuRadioGroup>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                )}
 
                 {/* Indicators Dropdown */}
                 <DropdownMenu>
@@ -327,6 +274,28 @@ export function ChartToolbar({
                     </TooltipTrigger>
                     <TooltipContent side="right">Download Chart</TooltipContent>
                 </Tooltip>
+
+                {chartType && onToggleChartType && (
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={chartType === "line" ? "Switch to candlestick chart" : "Switch to line chart"}
+                                title={chartType === "line" ? "Switch to candlestick" : "Switch to line"}
+                                className="h-8 w-8 text-[#787b86] hover:text-white hover:bg-[#2a2e39]"
+                                onClick={onToggleChartType}
+                            >
+                                {chartType === "line" ? (
+                                    <ChartLine className="h-4 w-4" />
+                                ) : (
+                                    <CandlestickIcon className="h-4 w-4" />
+                                )}
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="right">Toggle Chart Type</TooltipContent>
+                    </Tooltip>
+                )}
             </div>
         </TooltipProvider>
     )
@@ -334,8 +303,8 @@ export function ChartToolbar({
 
 // Default indicator settings
 export const defaultIndicators: ChartIndicators = {
-    ema12: true,
-    ema26: true,
+    ema12: false,
+    ema26: false,
     sma20: false,
     sma50: false,
     sma200: false,

@@ -1,0 +1,148 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "LLM Request Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "rate(stockradar_llm_requests_total[5m])",
+          "legendFormat": "{{model}} - {{status}}"
+        }
+      ]
+    },
+    {
+      "title": "LLM Latency (p50/p95/p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(stockradar_llm_latency_seconds_bucket[5m]))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(stockradar_llm_latency_seconds_bucket[5m]))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(stockradar_llm_latency_seconds_bucket[5m]))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "title": "Token Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "rate(stockradar_llm_tokens_total[5m])",
+          "legendFormat": "{{model}} - {{direction}}"
+        }
+      ]
+    },
+    {
+      "title": "API Cost (USD)",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(stockradar_api_cost_usd_total)",
+          "legendFormat": "Total Cost"
+        }
+      ]
+    },
+    {
+      "title": "Signal Distribution",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "targets": [
+        {
+          "expr": "stockradar_analysis_signal_total",
+          "legendFormat": "{{signal}}"
+        }
+      ]
+    },
+    {
+      "title": "Data Fetch Latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(stockradar_data_fetch_latency_seconds_bucket[5m]))",
+          "legendFormat": "{{provider}} - {{operation}} p95"
+        }
+      ]
+    },
+    {
+      "title": "Cache Hit Rate",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(stockradar_cache_hits_total) / (sum(stockradar_cache_hits_total) + sum(stockradar_cache_misses_total))",
+          "legendFormat": "Hit Rate"
+        }
+      ]
+    },
+    {
+      "title": "Guardrail Triggers",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 16 },
+      "targets": [
+        {
+          "expr": "rate(stockradar_guardrail_triggers_total[5m])",
+          "legendFormat": "{{rule}} - {{action}}"
+        }
+      ]
+    },
+    {
+      "title": "Composite Score Distribution",
+      "type": "histogram",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "stockradar_scoring_composite_bucket",
+          "legendFormat": "{{le}}"
+        }
+      ]
+    },
+    {
+      "title": "System Health",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 24 },
+      "targets": [
+        {
+          "expr": "stockradar_system_up",
+          "legendFormat": "System Up"
+        }
+      ]
+    },
+    {
+      "title": "Eval Accuracy",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 24 },
+      "targets": [
+        {
+          "expr": "stockradar_eval_accuracy",
+          "legendFormat": "Eval Accuracy"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["stock-radar", "ai", "monitoring"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "Stock Radar - AI System Dashboard",
+  "uid": "stock-radar-main"
+}

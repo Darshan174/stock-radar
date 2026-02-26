@@ -12,14 +12,12 @@ It uses RAG (Retrieval-Augmented Generation) to:
 import os
 import re
 import uuid
-import json
 import logging
 import time
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
 
-import litellm
 from litellm import completion
 
 from agents.storage import StockStorage
@@ -66,29 +64,49 @@ class StockChatAssistant:
 
     # LLM model fallback chain
     MODELS = [
-        "zai/glm-4.7",
-        "gemini/gemini-2.0-flash",
-        "ollama/mistral",
+        "openai/glm-4.7",
+        "gemini/gemini-2.5-flash",
     ]
 
-    SYSTEM_PROMPT = """You are Stock Radar's AI assistant, an expert in stock market analysis.
-You help users understand stocks, trading signals, and market conditions.
+    SYSTEM_PROMPT = """You are Stock Radar's AI analyst — a sharp, data-driven trading assistant.
 
-Guidelines:
-1. Answer questions based PRIMARILY on the provided context from our database
-2. If the context doesn't contain relevant information, say so clearly
-3. When discussing specific stocks, reference the data we have (analyses, signals, news)
-4. Be concise but thorough - traders value clear, actionable insights
-5. If asked about predictions, remind users that past performance doesn't guarantee future results
-6. Always cite the sources of your information when available
+Your responses must be:
+- STRUCTURED with clear sections using markdown headers and bullet points
+- SPECIFIC — always cite exact numbers (RSI=31.6, not "RSI is low")
+- EDUCATIONAL — briefly explain what each indicator means for non-experts
+- ACTIONABLE — give clear levels (entry, target, stop-loss) when data is available
 
-Context will be provided in the format:
-- Historical analyses from our database
-- Recent news articles
-- Past trading signals
-- Knowledge base entries
+Response format for stock analysis questions:
 
-Use this context to provide informed, data-backed responses."""
+## Signal & Conviction
+State the signal (BUY/SELL/HOLD), confidence %, and a one-line thesis.
+
+## Technical Breakdown
+For each indicator, state the value AND what it means:
+- RSI: value → what it signals (oversold <30, overbought >70, neutral 30-70)
+- MACD: value vs signal line → bullish/bearish crossover explanation
+- Price vs SMA: where price sits relative to moving averages → trend direction
+- Bollinger Bands: position within bands → volatility read
+- Volume: current vs average → conviction behind the move
+
+## Key Levels
+Table format: Support | Resistance | Target | Stop Loss
+
+## Algo Scores (if available)
+Momentum, Value, Quality, Risk scores with brief interpretation of each.
+
+## Risk Factors
+What could go wrong. Divergences between signals. Low confidence areas.
+
+## What This Means (Plain English)
+2-3 sentence summary a beginner would understand. No jargon.
+
+Rules:
+- Use the provided stock data and context as your primary source
+- If algo signal diverges from technical signal, explain WHY
+- Always end with a brief risk disclaimer
+- Use ₹ for Indian stocks, $ for US stocks
+- When no analysis exists, fetch what you can from context and be transparent about gaps"""
 
     def __init__(
         self,
@@ -103,7 +121,7 @@ Use this context to provide informed, data-backed responses."""
         Args:
             storage: StockStorage instance
             retriever: RAGRetriever instance
-            zai_key: Zhipu AI (Z.AI) API key for GLM-4.7
+            zai_key: Zhipu AI (Z.AI) API key for GLM-5
             gemini_key: Gemini API key
         """
         self.storage = storage or StockStorage()
@@ -111,22 +129,18 @@ Use this context to provide informed, data-backed responses."""
 
         # Configure API keys
         self.zai_key = zai_key or os.getenv("ZAI_API_KEY")
+        self.zai_api_base = os.getenv("ZAI_API_BASE", "https://open.bigmodel.cn/api/coding/paas/v4")
         self.gemini_key = gemini_key or os.getenv("GEMINI_API_KEY")
 
-        if self.zai_key:
-            os.environ["ZAI_API_KEY"] = self.zai_key
-            if not os.getenv("ZAI_API_BASE"):
-                os.environ["ZAI_API_BASE"] = "https://open.bigmodel.cn/api/coding/paas/v4"
         if self.gemini_key:
             os.environ["GEMINI_API_KEY"] = self.gemini_key
 
         # Build available models list
         self.available_models = []
         if self.zai_key:
-            self.available_models.append(self.MODELS[0])
+            self.available_models.append(self.MODELS[0])  # openai/glm-4.7
         if self.gemini_key:
             self.available_models.append(self.MODELS[1])
-        self.available_models.append(self.MODELS[2])  # Ollama backup
 
         # Conversation state
         self.session_id: Optional[str] = None
@@ -162,9 +176,9 @@ Use this context to provide informed, data-backed responses."""
         """
         # Common patterns for stock symbols
         patterns = [
-            r'\b([A-Z]{2,5})\.NS\b',  # Indian stocks: RELIANCE.NS
-            r'\b([A-Z]{2,5})\.BO\b',  # BSE stocks: RELIANCE.BO
-            r'\b([A-Z]{1,5})\b',       # US stocks: AAPL, MSFT
+            r'\b([A-Z]{2,20})\.NS\b',  # Indian NSE stocks: RELIANCE.NS, TATAMOTORS.NS
+            r'\b([A-Z]{2,20})\.BO\b',  # Indian BSE stocks: RELIANCE.BO
+            r'\b([A-Z]{2,20})\b',       # All stocks: RELIANCE, AAPL, BAJFINANCE
         ]
 
         symbols = set()
@@ -178,10 +192,242 @@ Use this context to provide informed, data-backed responses."""
             'CAN', 'HAD', 'HER', 'WAS', 'ONE', 'OUR', 'OUT', 'HAS',
             'HIS', 'HOW', 'ITS', 'MAY', 'NEW', 'NOW', 'OLD', 'SEE',
             'WAY', 'WHO', 'BOY', 'DID', 'GET', 'LET', 'PUT', 'SAY',
-            'SHE', 'TOO', 'USE', 'RSI', 'MACD', 'SMA', 'EMA', 'ATR'
+            'SHE', 'TOO', 'USE', 'RSI', 'MACD', 'SMA', 'EMA', 'ATR',
+            'WHAT', 'WHEN', 'WHERE', 'WHY', 'WHICH', 'SHOW', 'GIVE',
+            'TELL', 'ABOUT', 'LATEST', 'RECENT', 'CURRENT', 'BEST',
+            'GOOD', 'BAD', 'HIGH', 'LOW', 'BUY', 'SELL', 'HOLD',
+            'STOCK', 'PRICE', 'NEWS', 'FROM', 'WITH', 'THAT', 'THIS',
+            'WILL', 'BEEN', 'HAVE', 'EACH', 'MAKE', 'LIKE', 'LONG',
+            'LOOK', 'MANY', 'SOME', 'THAN', 'THEM', 'THEN', 'VERY',
+            'MUCH', 'ALSO', 'BACK', 'JUST', 'ONLY', 'COME', 'MADE',
+            'FIND', 'HERE', 'KNOW', 'TAKE', 'WANT', 'DOES', 'HELP',
+            'OVER', 'SUCH', 'WHAT', 'YEAR', 'INTO', 'MOST', 'WELL',
+            'ANALYSIS', 'COMPARE', 'BETWEEN', 'SHOULD', 'COULD',
+            'WOULD', 'MARKET', 'TRADING', 'SIGNAL', 'EXPLAIN',
+            'IS', 'IT', 'IF', 'IN', 'ON', 'OR', 'AT', 'TO', 'UP',
+            'SO', 'DO', 'NO', 'AN', 'AS', 'BY', 'GO', 'MY', 'OF',
+            'WE', 'ME', 'HE', 'BE', 'NS', 'BO',
         }
 
         return [s for s in symbols if s not in common_words and len(s) >= 2]
+
+    def _ensure_stock_data(self, symbol: str) -> bool:
+        """Check if symbol has data in DB. If not, fetch fresh and store."""
+        # Try symbol + common variants
+        for variant in [symbol, f"{symbol}.NS", f"{symbol}.BO"]:
+            stock = self.storage.get_stock_by_symbol(variant)
+            if stock:
+                return True
+
+        # No data found — fetch fresh
+        try:
+            from agents.fetcher import StockFetcher
+            import threading
+
+            fetcher = StockFetcher()
+
+            # Try symbol variants: raw, .NS, .BO
+            variants = [symbol]
+            if not symbol.endswith((".NS", ".BO")):
+                variants.extend([f"{symbol}.NS", f"{symbol}.BO"])
+
+            data = {}
+            for variant in variants:
+                # Fresh container per variant so a timed-out daemon thread
+                # from a previous iteration cannot contaminate it.
+                result_box: list[dict] = [{}]
+
+                def _do_fetch(sym=variant, box=result_box):
+                    try:
+                        box[0] = fetcher.get_full_analysis_data(sym, "1y")
+                    except Exception:
+                        pass
+
+                t = threading.Thread(target=_do_fetch, daemon=True)
+                t.start()
+                t.join(timeout=15)
+                if t.is_alive():
+                    logger.warning(f"Fresh fetch timed out for {variant}")
+                    continue
+                fetched = result_box[0]
+                if fetched.get("quote"):
+                    data = fetched
+                    symbol = variant
+                    break
+            else:
+                return False  # No variant returned a quote
+
+            if not data.get("quote"):
+                return False
+
+            # Infer exchange from resolved symbol suffix
+            if symbol.endswith(".NS"):
+                exchange = "NSE"
+            elif symbol.endswith(".BO"):
+                exchange = "BSE"
+            else:
+                exchange = "NASDAQ"
+
+            fundamentals = data.get("fundamentals") or {}
+            stock = self.storage.get_or_create_stock(
+                symbol=symbol,
+                name=fundamentals.get("name") or fundamentals.get("short_name") or symbol,
+                exchange=exchange,
+                sector=fundamentals.get("sector"),
+            )
+            stock_id = stock["id"]
+
+            # Store indicators
+            if data.get("indicators"):
+                self.storage.store_indicators(
+                    stock_id,
+                    datetime.now(timezone.utc),
+                    data["indicators"],
+                    timeframe="1d",
+                )
+
+            # Store news (up to 10 articles)
+            for news_item in (data.get("news") or [])[:10]:
+                try:
+                    self.storage.store_news(
+                        headline=news_item.headline,
+                        summary=news_item.summary,
+                        source=news_item.source,
+                        url=news_item.url,
+                        published_at=news_item.published_at,
+                        stock_id=stock_id,
+                    )
+                except Exception:
+                    pass  # Skip individual news storage failures
+
+            logger.info(f"Fresh data fetched and stored for {symbol}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Fresh fetch failed for {symbol}: {e}")
+            return False
+
+    def _fetch_direct_stock_data(self, symbols: List[str]) -> str:
+        """
+        Directly fetch latest analysis and live data for detected symbols.
+
+        This bypasses RAG similarity search and does exact symbol lookups,
+        ensuring we always have data when a stored analysis exists.
+        """
+        if not symbols:
+            return ""
+
+        parts = []
+        for symbol in symbols[:3]:  # Limit to 3 symbols
+            try:
+                # Try symbol variants: RELIANCE, RELIANCE.NS, RELIANCE.BO
+                stock = self.storage.get_stock_by_symbol(symbol)
+                if not stock:
+                    stock = self.storage.get_stock_by_symbol(f"{symbol}.NS")
+                if not stock:
+                    stock = self.storage.get_stock_by_symbol(f"{symbol}.BO")
+                if not stock:
+                    continue
+
+                stock_id = stock.get("id")
+                stock_name = stock.get("name", symbol)
+                exchange = stock.get("exchange", "")
+
+                section = f"=== {symbol} ({stock_name}) - {exchange} ==="
+
+                # Fetch latest stored analysis
+                for mode in ("intraday", "longterm"):
+                    analysis = self.storage.get_latest_analysis(stock_id, mode=mode)
+                    if analysis:
+                        signal = analysis.get("signal", "N/A")
+                        confidence = analysis.get("confidence", 0)
+                        reasoning = analysis.get("reasoning", "")
+                        created = str(analysis.get("created_at", ""))[:19]
+                        support = analysis.get("support_level")
+                        resistance = analysis.get("resistance_level")
+                        target = analysis.get("target_price")
+                        stop_loss = analysis.get("stop_loss")
+                        algo = analysis.get("algo_prediction")
+
+                        section += f"\n\nLatest {mode.upper()} Analysis ({created}):"
+                        section += f"\n  Signal: {signal}"
+                        section += f"\n  Confidence: {confidence}"
+                        section += f"\n  Reasoning: {reasoning}"
+                        if support:
+                            section += f"\n  Support: {support}"
+                        if resistance:
+                            section += f"\n  Resistance: {resistance}"
+                        if target:
+                            section += f"\n  Target Price: {target}"
+                        if stop_loss:
+                            section += f"\n  Stop Loss: {stop_loss}"
+                        if algo and isinstance(algo, dict):
+                            section += f"\n  Algo Signal: {algo.get('signal', 'N/A')}"
+                            section += f"\n  Algo Confidence: {algo.get('confidence', 'N/A')}"
+                            section += f"\n  Momentum Score: {algo.get('momentum_score', 'N/A')}"
+                            section += f"\n  Value Score: {algo.get('value_score', 'N/A')}"
+                            section += f"\n  Quality Score: {algo.get('quality_score', 'N/A')}"
+                            section += f"\n  Risk Score: {algo.get('risk_score', 'N/A')}"
+                            if algo.get("scoring_method"):
+                                section += f"\n  Scoring Method: {algo['scoring_method']}"
+                            if algo.get("market_regime"):
+                                section += f"\n  Market Regime: {algo['market_regime']}"
+                        break  # Use the first mode that has data
+
+                # Fetch latest technical indicators
+                if stock_id:
+                    try:
+                        ind = self.storage.get_latest_indicators(stock_id)
+                        if ind and isinstance(ind, dict):
+                            indicators = ind.get("indicators") or ind
+                            section += "\n\nTechnical Indicators:"
+                            indicator_keys = [
+                                ("rsi_14", "RSI(14)"),
+                                ("macd", "MACD"),
+                                ("macd_signal", "MACD Signal"),
+                                ("macd_histogram", "MACD Histogram"),
+                                ("sma_20", "SMA(20)"),
+                                ("sma_50", "SMA(50)"),
+                                ("sma_200", "SMA(200)"),
+                                ("price_vs_sma20_pct", "Price vs SMA20 %"),
+                                ("price_vs_sma50_pct", "Price vs SMA50 %"),
+                                ("bollinger_upper", "Bollinger Upper"),
+                                ("bollinger_lower", "Bollinger Lower"),
+                                ("atr_pct", "ATR %"),
+                                ("adx", "ADX"),
+                                ("plus_di", "+DI"),
+                                ("minus_di", "-DI"),
+                            ]
+                            for key, label in indicator_keys:
+                                val = indicators.get(key)
+                                if val is not None:
+                                    section += f"\n  {label}: {val}"
+                    except Exception:
+                        pass
+
+                # Fetch recent news for this stock
+                if stock_id:
+                    try:
+                        news = self.storage.get_recent_news(stock_id=stock_id, limit=3)
+                        if news:
+                            section += "\n\nRecent News:"
+                            for n in news:
+                                headline = n.get("headline", "")
+                                sentiment = n.get("sentiment_label", "neutral")
+                                date = str(n.get("published_at", ""))[:10]
+                                section += f"\n  [{date}] [{sentiment}] {headline}"
+                    except Exception:
+                        pass
+
+                parts.append(section)
+
+            except Exception as e:
+                logger.warning(f"Failed to fetch direct data for {symbol}: {e}")
+
+        if not parts:
+            return ""
+
+        return "=== DIRECT STOCK DATA (from database) ===\n" + "\n\n".join(parts)
 
     def _build_context_prompt(self, context: RAGContext) -> str:
         """
@@ -287,12 +533,18 @@ Use this context to provide informed, data-backed responses."""
             try:
                 logger.info(f"Trying model: {model}")
 
-                response = completion(
+                # Pass api_base and api_key for ZAI (OpenAI-compatible endpoint)
+                kwargs = dict(
                     model=model,
                     messages=messages,
                     temperature=temperature,
-                    max_tokens=1500,
+                    max_tokens=2500,
                 )
+                if model.startswith("openai/") and self.zai_key:
+                    kwargs["api_base"] = self.zai_api_base
+                    kwargs["api_key"] = self.zai_key
+
+                response = completion(**kwargs)
 
                 content = response.choices[0].message.content
                 tokens = 0
@@ -305,7 +557,7 @@ Use this context to provide informed, data-backed responses."""
                         tokens = (usage.prompt_tokens or 0) + (usage.completion_tokens or 0)
 
                 # Track usage
-                service = model.split("/")[0]
+                service = "zai" if model.startswith("openai/glm") else model.split("/")[0]
                 get_tracker().track(service, count=1, tokens=tokens)
 
                 logger.info(f"Success with {model} ({tokens} tokens)")
@@ -348,9 +600,16 @@ Use this context to provide informed, data-backed responses."""
         if stock_symbol and stock_symbol not in detected_symbols:
             detected_symbols.insert(0, stock_symbol)
 
+        # Ensure we have data for detected symbols (fresh-fetch fallback)
+        for sym in detected_symbols[:3]:
+            try:
+                self._ensure_stock_data(sym)
+            except Exception as e:
+                logger.warning(f"Data coverage check failed for {sym}: {e}")
+
         primary_symbol = detected_symbols[0] if detected_symbols else None
 
-        # Retrieve RAG context
+        # Retrieve RAG context (semantic search)
         context = self.retriever.retrieve_context(
             query=question,
             stock_symbol=primary_symbol,
@@ -364,8 +623,11 @@ Use this context to provide informed, data-backed responses."""
             match_threshold=0.4
         )
 
-        # Build context prompt
+        # Build context prompt from RAG
         context_prompt = self._build_context_prompt(context)
+
+        # Direct data fetch for detected symbols (bypasses RAG similarity)
+        direct_data = self._fetch_direct_stock_data(detected_symbols)
 
         # Build messages
         messages = [
@@ -383,14 +645,17 @@ Use this context to provide informed, data-backed responses."""
 
         # Add user question with context
         user_message = f"""Question: {question}
+{f"Primary stock: {primary_symbol}" if primary_symbol else ""}
 
-{f"Focus on stock: {primary_symbol}" if primary_symbol else ""}
+--- STOCK DATA (direct from database) ---
+{direct_data if direct_data else "No stored data found for this symbol."}
 
-Retrieved Context from Database:
+--- RAG CONTEXT (semantic search) ---
 {context_prompt}
+---
 
-Please answer the question based on the above context. If the context doesn't contain
-relevant information, acknowledge this and provide general guidance."""
+Use the structured response format from your instructions. Include every data point
+available — don't summarize away the numbers. Explain technical terms inline."""
 
         messages.append({"role": "user", "content": user_message})
 

@@ -1,0 +1,57 @@
+name: Train Model
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Comma-separated stock symbols"
+        required: false
+        default: "AAPL,MSFT,GOOGL,AMZN,META,NVDA,TSLA,JPM,V,JNJ"
+      period:
+        description: "Historical data period"
+        required: false
+        default: "1y"
+      n_trials:
+        description: "Optuna trials for hyperparameter search"
+        required: false
+        default: "30"
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build training dataset
+        run: |
+          cd src && python -m training.dataset_builder \
+            --symbols "${{ github.event.inputs.symbols }}" \
+            --period "${{ github.event.inputs.period }}" \
+            --output ../data/training_data.csv
+
+      - name: Train model
+        run: |
+          cd src && python -m training.train \
+            --dataset ../data/training_data.csv \
+            --n-trials ${{ github.event.inputs.n_trials }} \
+            --output ../models/
+
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-model
+          path: |
+            models/*.joblib
+            models/*_meta.json
+
+      - name: Upload dataset artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: training-dataset
+          path: data/training_data.csv

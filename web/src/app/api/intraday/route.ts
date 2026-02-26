@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
 
     try {
         // Fetch intraday data for specified interval and range from Yahoo Finance
-        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}&includePrePost=false`
+        const yahooUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}&includePrePost=false`
 
         const response = await fetch(yahooUrl, {
             headers: {

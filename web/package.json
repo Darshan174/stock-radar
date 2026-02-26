@@ -22,6 +22,7 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@supabase/supabase-js": "^2.90.1",
+    "@tailwindcss/typography": "^0.5.19",
     "@telegram-apps/bridge": "^2.11.0",
     "aptos": "^1.22.1",
     "class-variance-authority": "^0.7.1",
@@ -35,6 +36,7 @@
     "petra-plugin-wallet-adapter": "^0.4.5",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-markdown": "^10.1.0",
     "recharts": "^3.6.0",
     "tailwind-merge": "^3.4.0",
     "uplot": "^1.6.32"

@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "stock-radar"
+    static_configs:
+      - targets: ["host.docker.internal:9090"]
+        labels:
+          app: "stock-radar"
+          env: "dev"
+    metrics_path: "/metrics"
+    scrape_interval: 10s

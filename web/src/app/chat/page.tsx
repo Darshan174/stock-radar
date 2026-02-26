@@ -9,19 +9,6 @@ import { RAGBadge } from "@/components/rag-badge"
 export default function ChatPage() {
   return (
     <div className="p-6 h-screen flex flex-col">
-      <div className="mb-6">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Sparkles className="h-6 w-6 text-primary" />
-            AI Chat Assistant
-          </h1>
-          <RAGBadge isActive={true} size="lg" />
-        </div>
-        <p className="text-muted-foreground mt-1">
-          RAG-powered conversations about your stocks and market analysis
-        </p>
-      </div>
-
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-0">
         {/* Chat Interface */}
         <div className="lg:col-span-3 min-h-0">

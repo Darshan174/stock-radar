@@ -5,6 +5,7 @@ Fetches price data, technical indicators, and news from multiple sources.
 
 import os
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
@@ -974,7 +975,11 @@ class StockFetcher:
 
     def get_full_analysis_data(self, symbol: str, period: str = "2y") -> Dict[str, Any]:
         """
-        Get all data needed for analysis.
+        Get all data needed for analysis using parallel fetching.
+
+        Runs independent API calls concurrently via ThreadPoolExecutor,
+        reducing total latency from sum(all calls) to max(single call).
+        Also checks the Finnhub WebSocket cache for instant quote lookups.
 
         Args:
             symbol: Stock symbol (e.g., 'RELIANCE.NS', 'AAPL')
@@ -983,22 +988,75 @@ class StockFetcher:
         Returns:
             Dictionary with quote, history, indicators, fundamentals, and news
         """
-        logger.info(f"Fetching full analysis data for {symbol} (period={period})")
+        import time as _time
+        fetch_start = _time.time()
+        logger.info(f"Fetching full analysis data for {symbol} (period={period}, parallel=True)")
 
-        quote = self.get_quote(symbol)
-        history = self.get_price_history(symbol, period=period, interval="1d")
-        indicators = self.calculate_indicators(history)
-        fundamentals = self.get_fundamentals(symbol)
-        news_yahoo = self.get_news_yahoo(symbol)
-        news_finnhub = self.get_news_finnhub(symbol) if self.finnhub_key else []
+        # Try realtime WebSocket cache for instant quote
+        rt_quote = None
+        try:
+            from agents.realtime import get_realtime_manager
+            rt = get_realtime_manager()
+            rt_data = rt.get_latest(symbol)
+            if rt_data and rt_data["age_ms"] < 60_000:  # fresh within 60s
+                logger.info(f"  Realtime cache hit for {symbol}: ${rt_data['price']:.2f} (age={rt_data['age_ms']}ms)")
+                rt_quote = rt_data
+        except Exception:
+            pass
+
+        # Run independent fetches in parallel
+        results: Dict[str, Any] = {}
+
+        with ThreadPoolExecutor(max_workers=5, thread_name_prefix="fetch") as pool:
+            futures = {}
+
+            # Only fetch quote via API if no realtime cache hit
+            if not rt_quote:
+                futures["quote"] = pool.submit(self.get_quote, symbol)
+
+            futures["history"] = pool.submit(self.get_price_history, symbol, period, "1d")
+            futures["fundamentals"] = pool.submit(self.get_fundamentals, symbol)
+            futures["news_yahoo"] = pool.submit(self.get_news_yahoo, symbol)
+
+            if self.finnhub_key:
+                futures["news_finnhub"] = pool.submit(self.get_news_finnhub, symbol)
+                futures["finnhub_sentiment"] = pool.submit(
+                    self.get_sentiment_finnhub, symbol
+                )
+
+            for key, future in futures.items():
+                try:
+                    results[key] = future.result(timeout=30)
+                except Exception as e:
+                    logger.warning(f"  Parallel fetch failed for {key}: {e}")
+                    results[key] = None if key != "history" else []
+
+        # Use realtime quote or API quote
+        quote = results.get("quote")
+        if rt_quote and quote:
+            # Update API quote with latest realtime price
+            quote.price = rt_quote["price"]
+        elif rt_quote and not quote:
+            # Fallback: build minimal quote from realtime data
+            quote = None  # Let caller handle
+
+        history = results.get("history", [])
+        indicators = self.calculate_indicators(history) if history else {}
+
+        news_yahoo = results.get("news_yahoo") or []
+        news_finnhub = results.get("news_finnhub") or []
+
+        elapsed = _time.time() - fetch_start
+        logger.info(f"  Parallel fetch complete for {symbol} in {elapsed:.1f}s")
 
         return {
             "symbol": symbol,
             "quote": quote,
             "price_history": history,
             "indicators": indicators,
-            "fundamentals": fundamentals,
+            "fundamentals": results.get("fundamentals"),
             "news": news_yahoo + news_finnhub,
+            "finnhub_sentiment": results.get("finnhub_sentiment"),
             "fetched_at": datetime.now(timezone.utc).isoformat()
         }
 

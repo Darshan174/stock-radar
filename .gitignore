@@ -45,3 +45,8 @@ logs/
 data/
 *.db
 *.sqlite
+
+# ML models (large binary files)
+models/*.joblib
+models/*_meta.json
+models/registry.json

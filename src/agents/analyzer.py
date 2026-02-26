@@ -1,6 +1,6 @@
 """
 Stock Analyzer using LiteLLM.
-Provides AI-powered stock analysis with fallback chain: Groq -> Gemini -> Ollama
+Provides AI-powered stock analysis with fallback chain: ZAI GLM-4.7 -> Gemini
 """
 
 import os
@@ -9,7 +9,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from enum import Enum
 
 import litellm
@@ -18,10 +18,18 @@ from litellm import completion
 from agents.usage_tracker import get_tracker
 from agents.scorer import StockScorer
 
+# ML model integration (optional)
+try:
+    from config import settings as _cfg
+    from training.predictor import SignalPredictor
+    ML_AVAILABLE = True
+except ImportError:
+    ML_AVAILABLE = False
+
 # RAG imports (optional, for enhanced analysis)
 try:
-    from agents.rag_retriever import RAGRetriever, retrieve_analysis_context
-    from agents.rag_validator import RAGValidator, validate_rag_analysis
+    from agents.rag_retriever import RAGRetriever
+    from agents.rag_validator import RAGValidator
     RAG_AVAILABLE = True
 except ImportError:
     RAG_AVAILABLE = False
@@ -91,59 +99,48 @@ class AlgoPrediction:
 class StockAnalyzer:
     """
     AI-powered stock analyzer using LiteLLM.
-    Fallback chain: ZAI GLM-4.7 (primary) -> Gemini (quality) -> Ollama Mistral (backup)
+    Fallback chain: ZAI GLM-4.7 (primary) -> Gemini (secondary)
     """
 
     # Model fallback chain
     MODELS = [
-        "zai/glm-4.7",                       # Primary - Zhipu AI GLM-4.7 (200K context)
-        "gemini/gemini-2.0-flash",            # Secondary - Google's fast model
-        "ollama/mistral",                     # Backup - local (only if cloud fails)
+        "openai/glm-4.7",                     # Primary - Zhipu AI GLM-4.7 (OpenAI-compatible)
+        "gemini/gemini-2.5-flash",            # Secondary - Google's fast model
     ]
 
     def __init__(
         self,
         zai_key: Optional[str] = None,
         gemini_key: Optional[str] = None,
-        ollama_url: Optional[str] = None,
         enable_rag: bool = True
     ):
         """
         Initialize stock analyzer with API keys.
 
         Args:
-            zai_key: Zhipu AI (Z.AI) API key for GLM-4.7
+            zai_key: Zhipu AI (Z.AI) API key for GLM-5
             gemini_key: Google Gemini API key
-            ollama_url: Ollama API URL for local models
             enable_rag: Whether to enable RAG context retrieval for enhanced analysis
         """
         # Set API keys
         self.zai_key = zai_key or os.getenv("ZAI_API_KEY")
+        self.zai_api_base = os.getenv("ZAI_API_BASE", "https://open.bigmodel.cn/api/coding/paas/v4")
         self.gemini_key = gemini_key or os.getenv("GEMINI_API_KEY")
-        self.ollama_url = ollama_url or os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 
-        # Configure LiteLLM
-        if self.zai_key:
-            os.environ["ZAI_API_KEY"] = self.zai_key
-            # Coding Plan uses a different endpoint than the regular API
-            if not os.getenv("ZAI_API_BASE"):
-                os.environ["ZAI_API_BASE"] = "https://open.bigmodel.cn/api/coding/paas/v4"
+        # Configure Gemini for LiteLLM
         if self.gemini_key:
             os.environ["GEMINI_API_KEY"] = self.gemini_key
 
-        # Build available models list - ZAI GLM-4.7 is primary
+        # Build available models list - ZAI GLM-5 is primary
         self.available_models = []
 
-        # Primary: ZAI GLM-4.7 (cloud, 200K context)
+        # Primary: ZAI GLM-5 (OpenAI-compatible API)
         if self.zai_key:
-            self.available_models.append(self.MODELS[0])  # zai/glm-4.7
+            self.available_models.append(self.MODELS[0])  # openai/glm-4.7
 
         # Secondary: Gemini (if key available)
         if self.gemini_key:
             self.available_models.append(self.MODELS[1])
-
-        # Backup: Ollama Mistral (local, only if cloud fails)
-        self.available_models.append(self.MODELS[2])
 
         # Initialize RAG retriever for enhanced analysis
         self.enable_rag = enable_rag and RAG_AVAILABLE
@@ -181,12 +178,18 @@ class StockAnalyzer:
             try:
                 logger.info(f"Trying model: {model}")
 
-                response = completion(
+                # Pass api_base and api_key for ZAI (OpenAI-compatible endpoint)
+                kwargs = dict(
                     model=model,
                     messages=messages,
                     temperature=0.3,
                     max_tokens=2000,
                 )
+                if model.startswith("openai/") and self.zai_key:
+                    kwargs["api_base"] = self.zai_api_base
+                    kwargs["api_key"] = self.zai_key
+
+                response = completion(**kwargs)
 
                 content = response.choices[0].message.content
 
@@ -194,15 +197,12 @@ class StockAnalyzer:
                 tokens = 0
                 if hasattr(response, 'usage') and response.usage:
                     usage = response.usage
-                    # Try total_tokens first
                     if hasattr(usage, 'total_tokens') and usage.total_tokens:
                         tokens = usage.total_tokens
-                    # Fallback: sum prompt + completion tokens
                     elif hasattr(usage, 'prompt_tokens') and hasattr(usage, 'completion_tokens'):
                         prompt_tokens = usage.prompt_tokens or 0
                         completion_tokens = usage.completion_tokens or 0
                         tokens = prompt_tokens + completion_tokens
-                    # Try dict access as fallback
                     elif isinstance(usage, dict):
                         tokens = usage.get('total_tokens', 0) or (
                             usage.get('prompt_tokens', 0) + usage.get('completion_tokens', 0)
@@ -211,7 +211,7 @@ class StockAnalyzer:
                     logger.debug(f"Token usage details: {usage}")
 
                 # Track usage
-                service = model.split("/")[0]  # Extract provider: zai, gemini, ollama
+                service = "zai" if model.startswith("openai/glm") else model.split("/")[0]
                 get_tracker().track(service, count=1, tokens=tokens)
 
                 logger.info(f"Success with {model} ({tokens} tokens)")
@@ -669,7 +669,7 @@ If the news doesn't explain it, mention possible reasons (sector movement, marke
             return None
 
     # -------------------------------------------------------------------------
-    # Verification (Ollama Inspector)
+    # Verification (LLM Inspector)
     # -------------------------------------------------------------------------
 
     def verify_analysis(
@@ -679,7 +679,7 @@ If the news doesn't explain it, mention possible reasons (sector movement, marke
         indicators: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Use Ollama to verify/validate an analysis (inspector role).
+        Use LLM to verify/validate an analysis (inspector role).
 
         Args:
             analysis: The analysis to verify
@@ -720,15 +720,8 @@ Respond with JSON:
 }}"""
 
         try:
-            # Force use Ollama for verification
-            response = completion(
-                model="ollama/mistral",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=500,
-            )
-
-            result = self._extract_json(response.choices[0].message.content)
+            response_text, _, _ = self._call_llm(prompt)
+            result = self._extract_json(response_text)
             return result or {"is_valid": True, "confidence_adjustment": 0}
 
         except Exception as e:
@@ -746,7 +739,9 @@ Respond with JSON:
         indicators: Dict[str, Any],
         fundamentals: Dict[str, Any] = None,
         news: List[Dict[str, Any]] = None,
-        price_history_days: int = 0
+        price_history_days: int = 0,
+        price_history: Optional[List] = None,
+        finnhub_sentiment: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Generate algo trading prediction with ALGORITHMIC scores + LLM reasoning.
@@ -767,13 +762,85 @@ Respond with JSON:
             fundamentals: Company fundamentals (optional)
             news: Recent news (optional)
             price_history_days: Number of days of price history available
+            price_history: Price history list (optional)
+            finnhub_sentiment: Finnhub sentiment dict (optional, Phase-6)
             
         Returns:
             Algo prediction with scores, predicted returns, and reasoning
         """
         start_time = time.time()
-        
-        # Step 1: Calculate algorithmic scores (no LLM involved)
+        from training.regime import classify_market_regime
+        from training.risk import calculate_position_size
+
+        # Step 1: Try ML model first (primary), fall back to rule-based formulas
+        ml_result = None
+        if ML_AVAILABLE and getattr(_cfg, 'ml_model_enabled', True) and getattr(_cfg, 'ml_model_path', None):
+            try:
+                # Try regime-aware predictor first, fall back to general
+                predictor = None
+                try:
+                    from training.regime_router import discover_regime_models, RegimeAwarePredictor
+                    regime_models = discover_regime_models()
+                    if regime_models:
+                        predictor = RegimeAwarePredictor(
+                            general_model_path=_cfg.ml_model_path,
+                        )
+                        logger.info(f"Using RegimeAwarePredictor with {len(regime_models)} regime model(s)")
+                except Exception as regime_err:
+                    logger.debug(f"Regime router not available, using general model: {regime_err}")
+
+                if predictor is None:
+                    predictor = SignalPredictor(_cfg.ml_model_path)
+
+                # Extract OHLCV series for Phase-5 features
+                _closes, _highs, _lows, _volumes = None, None, None, None
+                if price_history and len(price_history) >= 20:
+                    _closes = [
+                        (p.close if hasattr(p, 'close') else p.get('close', 0.0))
+                        for p in price_history
+                    ]
+                    _highs = [
+                        (p.high if hasattr(p, 'high') else p.get('high', 0.0))
+                        for p in price_history
+                    ]
+                    _lows = [
+                        (p.low if hasattr(p, 'low') else p.get('low', 0.0))
+                        for p in price_history
+                    ]
+                    _volumes = [
+                        float(p.volume if hasattr(p, 'volume') else p.get('volume', 0))
+                        for p in price_history
+                    ]
+
+                # Extract headlines and timestamps for Phase-6 sentiment
+                _headlines = None
+                _headline_ts = None
+                if news:
+                    _headlines = [
+                        n.get("headline", "") for n in news if n.get("headline")
+                    ]
+                    _headline_ts = [
+                        n.get("published_at") for n in news if n.get("headline")
+                    ]
+
+                ml_result = predictor.predict(
+                    indicators=indicators,
+                    fundamentals=fundamentals,
+                    quote=quote,
+                    closes=_closes,
+                    highs=_highs,
+                    lows=_lows,
+                    volumes=_volumes,
+                    headlines=_headlines,
+                    headline_timestamps=_headline_ts,
+                    finnhub_sentiment=finnhub_sentiment,
+                )
+                logger.info(f"ML prediction for {symbol}: {ml_result['signal']} "
+                           f"(confidence={ml_result['confidence']:.2%})")
+            except Exception as ml_err:
+                logger.warning(f"ML prediction failed, falling back to formulas: {ml_err}")
+
+        # Fallback: rule-based formulas (used when no trained ML model)
         scorer = StockScorer()
         algo_scores = scorer.calculate_all_scores(
             quote=quote,
@@ -782,9 +849,9 @@ Respond with JSON:
             price_history_days=price_history_days,
             has_news=bool(news)
         )
-        
-        logger.info(f"Algorithmic scores for {symbol}: M={algo_scores.momentum_score}, V={algo_scores.value_score}, Q={algo_scores.quality_score}, R={algo_scores.risk_score}")
-        
+
+        logger.info(f"Formula scores for {symbol}: M={algo_scores.momentum_score}, V={algo_scores.value_score}, Q={algo_scores.quality_score}, R={algo_scores.risk_score}")
+
         # Step 2: Use LLM only for generating reasoning explanation
         system_prompt = """You are a stock analyst. Given the calculated scores, provide a brief explanation of what they mean for this stock.
 Do NOT make up new scores or predictions - use the provided scores.
@@ -844,16 +911,62 @@ Respond with JSON only:"""
                     "predicted_return_90d": 0
                 }
             
-            # Build final prediction with algorithmic scores + LLM reasoning
+            # Build final prediction: ML signal takes priority, formulas are fallback
+            if ml_result:
+                final_signal = ml_result["signal"]
+                final_confidence = ml_result["confidence"]
+                scoring_method = "ml_model"
+            else:
+                final_signal = algo_scores.overall_signal
+                final_confidence = algo_scores.confidence_score / 100
+                scoring_method = "formulas"
+
+            regime_info = classify_market_regime(indicators)
+            position_info = calculate_position_size(
+                signal=final_signal,
+                confidence=final_confidence,
+                volatility_pct=indicators.get("atr_pct") if indicators else None,
+                regime=regime_info["regime"],
+                risk_factor=1.0,
+                target_volatility_pct=2.0,
+                min_confidence=0.35,
+            )
+
+            # Compute stop-loss / take-profit at top level
+            from training.risk import calculate_stop_take_profit, calculate_per_trade_risk
+            entry_price = float(quote.get("price", 0)) if quote else 0.0
+            stop_tp = calculate_stop_take_profit(
+                signal=final_signal,
+                entry_price=entry_price,
+                atr=indicators.get("atr_14") if indicators else None,
+            )
+
+            # Per-trade risk budgeting: auto-scale position if risk exceeds 2%
+            final_position_size = position_info["position_size"]
+            per_trade_risk = None
+            if stop_tp["risk_pct"] is not None:
+                per_trade_risk = calculate_per_trade_risk(
+                    position_size=abs(final_position_size),
+                    stop_loss_pct=stop_tp["risk_pct"],
+                )
+                if not per_trade_risk["within_limits"]:
+                    sign = 1.0 if final_position_size >= 0 else -1.0
+                    final_position_size = sign * per_trade_risk["adjusted_position_size"]
+                    position_info = {
+                        **position_info,
+                        "position_size": round(float(final_position_size), 6),
+                        "position_size_pct": round(abs(final_position_size) * 100.0, 3),
+                        "risk_adjusted": True,
+                    }
+
             prediction = {
-                # Algorithmic scores (calculated, not LLM-generated)
-                "signal": algo_scores.overall_signal,
-                "confidence": algo_scores.confidence_score / 100,  # Convert to 0-1
+                "signal": final_signal,
+                "confidence": final_confidence,
                 "momentum_score": algo_scores.momentum_score,
                 "value_score": algo_scores.value_score,
                 "quality_score": algo_scores.quality_score,
                 "risk_score": algo_scores.risk_score,
-                
+
                 # Score breakdowns for transparency
                 "score_breakdowns": {
                     "momentum": algo_scores.momentum_breakdown,
@@ -861,15 +974,29 @@ Respond with JSON only:"""
                     "quality": algo_scores.quality_breakdown,
                     "risk": algo_scores.risk_breakdown,
                 },
-                
+
                 # LLM-generated explanation
                 "reasoning": llm_response.get("reasoning", []),
                 "key_factors": llm_response.get("key_factors", []),
                 "predicted_return_30d": llm_response.get("predicted_return_30d", 0),
                 "predicted_return_90d": llm_response.get("predicted_return_90d", 0),
-                
+
+                # Stop-loss / take-profit (top-level)
+                "stop_loss": stop_tp["stop_loss"],
+                "take_profit": stop_tp["take_profit"],
+                "risk_reward": stop_tp,
+                "per_trade_risk": per_trade_risk,
+
+                # ML details (if available)
+                "ml_prediction": ml_result,
+                "market_regime": regime_info["regime"],
+                "regime_confidence": regime_info["confidence"],
+                "position_size": final_position_size,
+                "position_size_pct": round(abs(final_position_size) * 100.0, 3),
+                "position_sizing": position_info,
+
                 # Metadata
-                "scoring_method": "algorithmic",  # Flag to indicate formula-based
+                "scoring_method": scoring_method,
                 "llm_model": model_used,
                 "tokens_used": tokens,
                 "analysis_duration_ms": int((time.time() - start_time) * 1000),
@@ -883,6 +1010,16 @@ Respond with JSON only:"""
         except Exception as e:
             logger.error(f"Algo prediction failed for {symbol}: {e}")
             # Return algorithmic scores even if LLM fails
+            regime_info = classify_market_regime(indicators)
+            position_info = calculate_position_size(
+                signal=algo_scores.overall_signal,
+                confidence=algo_scores.confidence_score / 100,
+                volatility_pct=indicators.get("atr_pct") if indicators else None,
+                regime=regime_info["regime"],
+                risk_factor=1.0,
+                target_volatility_pct=2.0,
+                min_confidence=0.35,
+            )
             return {
                 "signal": algo_scores.overall_signal,
                 "confidence": algo_scores.confidence_score / 100,
@@ -890,6 +1027,11 @@ Respond with JSON only:"""
                 "value_score": algo_scores.value_score,
                 "quality_score": algo_scores.quality_score,
                 "risk_score": algo_scores.risk_score,
+                "market_regime": regime_info["regime"],
+                "regime_confidence": regime_info["confidence"],
+                "position_size": position_info["position_size"],
+                "position_size_pct": position_info["position_size_pct"],
+                "position_sizing": position_info,
                 "scoring_method": "algorithmic",
                 "reasoning": ["Scores calculated algorithmically from financial data"],
                 "error": str(e),

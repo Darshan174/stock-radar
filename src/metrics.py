@@ -159,6 +159,26 @@ SCORING_DISTRIBUTION = Histogram(
 )
 
 
+# =============================================================================
+# System Metrics
+# =============================================================================
+
+SYSTEM_UP = Gauge(
+    "stockradar_system_up",
+    "Whether the Stock Radar system is running (1=up, 0=down)",
+)
+
+ML_MODEL_LOADED = Gauge(
+    "stockradar_ml_model_loaded",
+    "Whether an ML model is currently loaded (1=yes, 0=no)",
+)
+
+EVAL_ACCURACY = Gauge(
+    "stockradar_eval_accuracy",
+    "Latest evaluation signal accuracy",
+)
+
+
 def get_metrics_response() -> tuple[bytes, str]:
     """Generate Prometheus metrics response."""
     return generate_latest(), CONTENT_TYPE_LATEST

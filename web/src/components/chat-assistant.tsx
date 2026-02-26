@@ -28,7 +28,9 @@ import {
   Minimize2,
   Database,
 } from "lucide-react"
+import ReactMarkdown from "react-markdown"
 import { RAGBadge } from "./rag-badge"
+import { useSidebar } from "@/providers/sidebar-provider"
 
 interface ChatMessage {
   id: string
@@ -60,6 +62,7 @@ interface ChatResponse {
   modelUsed: string
   tokensUsed: number
   processingTimeMs: number
+  sessionId?: string
   contextRetrieved?: {
     totalResults: number
     sourcesSearched: string[]
@@ -79,13 +82,17 @@ export function ChatAssistant({
   defaultSymbol,
   isFloating = false,
 }: ChatAssistantProps) {
+  const { collapsed } = useSidebar()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [isOpen, setIsOpen] = useState(!isFloating)
   const [isExpanded, setIsExpanded] = useState(false)
+  const [sessionId, setSessionId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const floatingLeftClass = collapsed ? "md:left-[88px]" : "md:left-[280px]"
+  const expandedLeftClass = collapsed ? "md:left-16" : "md:left-64"
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -120,13 +127,18 @@ export function ChatAssistant({
         body: JSON.stringify({
           question: userMessage.content,
           symbol: defaultSymbol,
+          sessionId,
         }),
       })
 
       const data: ChatResponse = await response.json()
 
-      if (data.error) {
+      if (!response.ok || data.error) {
         throw new Error(data.error)
+      }
+
+      if (data.sessionId) {
+        setSessionId(data.sessionId)
       }
 
       const assistantMessage: ChatMessage = {
@@ -233,7 +245,13 @@ export function ChatAssistant({
                     : "bg-muted"
                 )}
               >
-                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                {message.role === "assistant" ? (
+                  <div className="text-sm prose prose-sm dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0.5 prose-table:my-1 max-w-none">
+                    <ReactMarkdown>{message.content}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                )}
 
                 {/* Sources Used - RAG Context */}
                 {message.sourcesUsed && message.sourcesUsed.length > 0 && (
@@ -354,7 +372,10 @@ export function ChatAssistant({
         {!isOpen && (
           <Button
             onClick={() => setIsOpen(true)}
-            className="fixed bottom-6 left-6 ml-64 h-14 w-14 rounded-full shadow-lg z-50"
+            className={cn(
+              "fixed bottom-6 left-4 h-14 w-14 rounded-full shadow-lg z-50",
+              floatingLeftClass
+            )}
             size="icon"
           >
             <MessageCircle className="h-6 w-6" />
@@ -367,8 +388,8 @@ export function ChatAssistant({
             className={cn(
               "fixed z-50 flex flex-col shadow-2xl transition-all duration-200",
               isExpanded
-                ? "bottom-0 left-64 right-0 w-auto h-full rounded-none"
-                : "bottom-6 left-6 ml-64 w-[400px] h-[600px] rounded-xl",
+                ? cn("bottom-0 left-0 right-0 w-auto h-full rounded-none", expandedLeftClass)
+                : cn("bottom-6 left-4 w-[min(400px,calc(100vw-2rem))] h-[600px] rounded-xl", floatingLeftClass),
               className
             )}
           >

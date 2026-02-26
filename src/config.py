@@ -44,14 +44,14 @@ class Settings(BaseSettings):
     # LLM Providers
     # -------------------------------------------------------------------------
     zai_api_key: str | None = Field(default=None, alias="ZAI_API_KEY")
-    gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
-    ollama_api_url: str = Field(
-        default="http://localhost:11434", alias="OLLAMA_API_URL"
+    zai_api_base: str = Field(
+        default="https://open.bigmodel.cn/api/coding/paas/v4", alias="ZAI_API_BASE"
     )
+    gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
 
     # Model fallback order (comma-separated)
     llm_fallback_order: str = Field(
-        default="zai/glm-4.7,gemini/gemini-2.0-flash,ollama/mistral",
+        default="openai/glm-4.7,gemini/gemini-2.5-flash",
         alias="LLM_FALLBACK_ORDER",
     )
     llm_temperature: float = Field(default=0.3, alias="LLM_TEMPERATURE")
@@ -143,14 +143,78 @@ class Settings(BaseSettings):
     )
 
     # -------------------------------------------------------------------------
+    # ML Model
+    # -------------------------------------------------------------------------
+    ml_model_path: str | None = Field(default=None, alias="ML_MODEL_PATH")
+    ml_model_enabled: bool = Field(default=True, alias="ML_MODEL_ENABLED")
+
+    # -------------------------------------------------------------------------
+    # Paper Trading
+    # -------------------------------------------------------------------------
+    paper_trading_enabled: bool = Field(default=False, alias="PAPER_TRADING_ENABLED")
+    paper_trading_dir: str = Field(default="data/paper_trading", alias="PAPER_TRADING_DIR")
+    paper_trading_capital: float = Field(default=100_000.0, alias="PAPER_TRADING_CAPITAL")
+
+    # -------------------------------------------------------------------------
+    # Kill Switches
+    # -------------------------------------------------------------------------
+    kill_switch_enabled: bool = Field(default=True, alias="KILL_SWITCH_ENABLED")
+    kill_switch_max_daily_loss_pct: float = Field(default=5.0, alias="KILL_SWITCH_MAX_DAILY_LOSS_PCT")
+    kill_switch_max_stale_ms: int = Field(default=60_000, alias="KILL_SWITCH_MAX_STALE_MS")
+    kill_switch_slippage_threshold_pct: float = Field(default=2.0, alias="KILL_SWITCH_SLIPPAGE_THRESHOLD_PCT")
+
+    # -------------------------------------------------------------------------
+    # Metrics Server
+    # -------------------------------------------------------------------------
+    metrics_port: int = Field(default=9090, alias="METRICS_PORT")
+    health_check_enabled: bool = Field(default=True, alias="HEALTH_CHECK_ENABLED")
+
+    # -------------------------------------------------------------------------
     # Prompt Versioning
     # -------------------------------------------------------------------------
     prompt_version: str = Field(default="v1", alias="PROMPT_VERSION")
+
+    # -------------------------------------------------------------------------
+    # Broker / Execution
+    # -------------------------------------------------------------------------
+    broker_mode: str = Field(default="paper", alias="BROKER_MODE")
+    broker_retry_max: int = Field(default=3, alias="BROKER_RETRY_MAX")
+    broker_retry_backoff: float = Field(default=1.0, alias="BROKER_RETRY_BACKOFF")
+
+    # -------------------------------------------------------------------------
+    # Pre-Trade Risk
+    # -------------------------------------------------------------------------
+    pre_trade_risk_enabled: bool = Field(default=True, alias="PRE_TRADE_RISK_ENABLED")
+    pre_trade_max_position: float = Field(default=0.20, alias="PRE_TRADE_MAX_POSITION")
+    pre_trade_max_sector: float = Field(default=0.35, alias="PRE_TRADE_MAX_SECTOR")
+    pre_trade_max_daily_loss_pct: float = Field(default=5.0, alias="PRE_TRADE_MAX_DAILY_LOSS_PCT")
+    pre_trade_max_exposure: float = Field(default=1.0, alias="PRE_TRADE_MAX_EXPOSURE")
+
+    # -------------------------------------------------------------------------
+    # Canary Mode
+    # -------------------------------------------------------------------------
+    canary_enabled: bool = Field(default=False, alias="CANARY_ENABLED")
+    canary_dir: str = Field(default="data/canary", alias="CANARY_DIR")
+    canary_symbols: str = Field(default="", alias="CANARY_SYMBOLS")
+    canary_max_trades: int = Field(default=50, alias="CANARY_MAX_TRADES")
+    canary_max_loss_pct: float = Field(default=3.0, alias="CANARY_MAX_LOSS_PCT")
+    canary_capital: float = Field(default=10_000.0, alias="CANARY_CAPITAL")
+
+    # -------------------------------------------------------------------------
+    # Audit
+    # -------------------------------------------------------------------------
+    audit_enabled: bool = Field(default=True, alias="AUDIT_ENABLED")
+    audit_dir: str = Field(default="data/audit", alias="AUDIT_DIR")
 
     @property
     def fallback_models(self) -> list[str]:
         """Parse the LLM fallback order into a list."""
         return [m.strip() for m in self.llm_fallback_order.split(",") if m.strip()]
+
+    @property
+    def canary_symbol_list(self) -> list[str]:
+        """Parse canary symbols into a list."""
+        return [s.strip().upper() for s in self.canary_symbols.split(",") if s.strip()]
 
 
 # Singleton - created once, imported everywhere

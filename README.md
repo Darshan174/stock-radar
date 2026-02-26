@@ -102,6 +102,23 @@ curl http://localhost:3000/api/agent/discover | jq .
 curl http://localhost:3000/api/agent/reputation | jq .
 ```
 
+### 5. Phase 10 runtime controls (Python engine)
+
+```bash
+# From repo root
+python main.py paper dashboard
+python main.py canary status
+python main.py audit report
+```
+
+Core environment flags for execution hardening:
+
+- `BROKER_MODE`, `BROKER_RETRY_MAX`, `BROKER_RETRY_BACKOFF`
+- `PRE_TRADE_RISK_ENABLED`, `PRE_TRADE_MAX_POSITION`, `PRE_TRADE_MAX_SECTOR`
+- `PRE_TRADE_MAX_DAILY_LOSS_PCT`, `PRE_TRADE_MAX_EXPOSURE`
+- `CANARY_ENABLED`, `CANARY_DIR`, `CANARY_SYMBOLS`, `CANARY_MAX_TRADES`, `CANARY_MAX_LOSS_PCT`
+- `AUDIT_ENABLED`, `AUDIT_DIR`
+
 ---
 
 ## On-Chain Agent Identity
@@ -171,7 +188,7 @@ node scripts/register-agent.js
 | Frontend | Next.js 15, React 19, Tailwind CSS 4, Radix UI |
 | Blockchain | Aptos testnet, Move language |
 | Wallet | Petra (AIP-62), @aptos-labs/ts-sdk |
-| AI/LLM | Zhipu AI (GLM-4.7), Gemini fallback |
+| AI/LLM | Zhipu AI (GLM-5), Gemini fallback |
 | Database | Supabase (PostgreSQL) |
 | Messaging | XMTP protocol over HTTP |
 
