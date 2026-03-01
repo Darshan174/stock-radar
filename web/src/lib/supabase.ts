@@ -30,6 +30,7 @@ export interface Analysis {
     target_price: number | null
     stop_loss: number | null
     llm_model: string
+    embedding_text?: string | null
     created_at: string
     stocks?: Stock
 }

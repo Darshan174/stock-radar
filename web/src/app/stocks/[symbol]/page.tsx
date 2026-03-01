@@ -494,7 +494,7 @@ export default function StockDetailPage() {
         {aiPanelOpen && (
           <div className="mt-2">
             <AIAnalysisPanel
-              analysis={latestAnalysis}
+              analysis={latestAnalysis ?? null}
               currentPrice={chartData.length > 0 ? chartData[chartData.length - 1].close : undefined}
               currency={stock.currency === "INR" ? "\u20B9" : "$"}
               onRunAnalysis={handleAnalyze}

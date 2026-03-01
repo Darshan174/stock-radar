@@ -472,7 +472,7 @@ export function CandlestickChart({
     } else {
       lineSeries = chart.addSeries(LineSeries, {
         color: "#2563eb",
-        lineWidth: 2.2,
+        lineWidth: 2,
         crosshairMarkerVisible: false,
       })
       mainSeries = lineSeries
