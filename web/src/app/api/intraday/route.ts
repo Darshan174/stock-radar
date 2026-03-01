@@ -75,10 +75,10 @@ export async function GET(request: NextRequest) {
         let todayCandle = null
         if (candles.length > 0 && (interval === "1m" || interval === "5m" || interval === "15m")) {
             const todayOpen = candles[0].open
-            const todayHigh = Math.max(...candles.map((c) => c.high))
-            const todayLow = Math.min(...candles.map((c) => c.low))
+            const todayHigh = Math.max(...candles.map((c: IntradayCandle) => c.high))
+            const todayLow = Math.min(...candles.map((c: IntradayCandle) => c.low))
             const todayClose = candles[candles.length - 1].close
-            const todayVolume = candles.reduce((acc, c) => acc + c.volume, 0)
+            const todayVolume = candles.reduce((acc: number, c: IntradayCandle) => acc + c.volume, 0)
 
             // Get date string for the daily candle
             const firstDate = new Date(candles[0].time * 1000)
