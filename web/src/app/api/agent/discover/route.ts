@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { PROTECTED_ENDPOINTS } from "@/lib/x402-enforcer"
+import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
 
 /**
  * Agent Discovery Endpoint
@@ -20,6 +21,9 @@ import { PROTECTED_ENDPOINTS } from "@/lib/x402-enforcer"
  */
 
 export async function GET(request: NextRequest) {
+  const limited = await enforceRateLimit(request, RATE_BUCKETS.free)
+  if (limited) return limited
+
   const host = request.headers.get("host") || "localhost:3000"
   const protocol = host.includes("localhost") ? "http" : "https"
   const baseUrl = `${protocol}://${host}`

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
 
 // Lazy Supabase client initialization to avoid module load errors
 function getSupabase() {
@@ -67,6 +68,9 @@ export interface RAGContextResponse {
 }
 
 export async function GET(request: NextRequest) {
+  const limited = await enforceRateLimit(request, RATE_BUCKETS.free)
+  if (limited) return limited
+
   const startTime = Date.now()
   const searchParams = request.nextUrl.searchParams
   const symbol = searchParams.get("symbol")

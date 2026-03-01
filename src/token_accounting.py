@@ -50,6 +50,8 @@ from metrics import (
 MODEL_COSTS: dict[str, dict[str, float]] = {
     "openai/glm-4.7": {"input": 0.0007, "output": 0.0007},
     "gemini/gemini-2.5-flash": {"input": 0.0, "output": 0.0},  # Free tier
+    "groq/llama-3.1-70b-versatile": {"input": 0.0, "output": 0.0},  # Free tier / route default
+    "groq/llama-3.1-8b-instant": {"input": 0.0, "output": 0.0},  # Free tier / route default
 }
 
 

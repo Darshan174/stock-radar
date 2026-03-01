@@ -3,6 +3,7 @@ import { exec } from "child_process"
 import { promisify } from "util"
 import path from "path"
 import { createClient } from "@supabase/supabase-js"
+import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
 
 const execAsync = promisify(exec)
 
@@ -30,6 +31,9 @@ function getSupabase() {
  *   - clearExisting: Whether to clear existing price data before backfilling (default: false)
  */
 export async function POST(request: NextRequest) {
+  const limited = await enforceRateLimit(request, RATE_BUCKETS.paid)
+  if (limited) return limited
+
   try {
     const supabase = getSupabase()
     const { symbol, period = "max", clearExisting = false } = await request.json()
@@ -77,12 +81,6 @@ export async function POST(request: NextRequest) {
             .delete()
             .eq("stock_id", stock.id)
         }
-
-        // Get current record count before backfill
-        const { count: beforeCount } = await supabase
-          .from("price_history")
-          .select("*", { count: "exact", head: true })
-          .eq("stock_id", stock.id)
 
         // Run Python script to fetch and store historical data
         const pythonCode = `
@@ -191,6 +189,9 @@ else:
  * Get the current price history status for a stock or all stocks.
  */
 export async function GET(request: NextRequest) {
+  const limited = await enforceRateLimit(request, RATE_BUCKETS.free)
+  if (limited) return limited
+
   try {
     const supabase = getSupabase()
     const searchParams = request.nextUrl.searchParams

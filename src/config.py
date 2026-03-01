@@ -48,12 +48,16 @@ class Settings(BaseSettings):
         default="https://open.bigmodel.cn/api/coding/paas/v4", alias="ZAI_API_BASE"
     )
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
+    groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
 
     # Model fallback order (comma-separated)
     llm_fallback_order: str = Field(
         default="openai/glm-4.7,gemini/gemini-2.5-flash",
         alias="LLM_FALLBACK_ORDER",
     )
+    # Task-based routes, format:
+    # "analysis=model_a,model_b;chat=model_x,model_y;sentiment=model_p,model_q"
+    llm_task_routes: str = Field(default="", alias="LLM_TASK_ROUTES")
     llm_temperature: float = Field(default=0.3, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=2000, alias="LLM_MAX_TOKENS")
     llm_timeout_sec: int = Field(default=60, alias="LLM_TIMEOUT_SEC")
@@ -210,6 +214,24 @@ class Settings(BaseSettings):
     def fallback_models(self) -> list[str]:
         """Parse the LLM fallback order into a list."""
         return [m.strip() for m in self.llm_fallback_order.split(",") if m.strip()]
+
+    @property
+    def task_model_routes(self) -> dict[str, list[str]]:
+        """Parse task-specific model routes from LLM_TASK_ROUTES."""
+        routes: dict[str, list[str]] = {}
+        if not self.llm_task_routes:
+            return routes
+
+        for raw_clause in self.llm_task_routes.split(";"):
+            clause = raw_clause.strip()
+            if not clause or "=" not in clause:
+                continue
+            task, model_csv = clause.split("=", 1)
+            task = task.strip().lower()
+            models = [m.strip() for m in model_csv.split(",") if m.strip()]
+            if task and models:
+                routes[task] = models
+        return routes
 
     @property
     def canary_symbol_list(self) -> list[str]:

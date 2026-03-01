@@ -45,7 +45,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import Any, AsyncGenerator, Generator
+from typing import Any, Generator
 
 import litellm
 
@@ -54,6 +54,7 @@ def stream_llm_response(
     prompt: str,
     system_prompt: str = "",
     models: list[str] | None = None,
+    task: str = "default",
     temperature: float = 0.3,
     max_tokens: int = 2000,
 ) -> Generator[dict[str, Any], None, None]:
@@ -66,6 +67,7 @@ def stream_llm_response(
         prompt: User prompt
         system_prompt: System prompt
         models: List of models to try (fallback chain)
+        task: Logical task route key (used when models is None)
         temperature: LLM temperature
         max_tokens: Max tokens to generate
 
@@ -77,7 +79,9 @@ def stream_llm_response(
     if models is None:
         try:
             from config import settings
-            models = settings.fallback_models
+            routes = settings.task_model_routes
+            task_route = routes.get((task or "default").lower())
+            models = task_route if task_route else settings.fallback_models
         except Exception:
             models = ["openai/glm-4.7", "gemini/gemini-2.5-flash"]
 
@@ -114,6 +118,10 @@ def stream_llm_response(
                 if zai_key:
                     kwargs["api_base"] = zai_base
                     kwargs["api_key"] = zai_key
+            elif model.startswith("groq/"):
+                groq_key = os.getenv("GROQ_API_KEY")
+                if groq_key:
+                    kwargs["api_key"] = groq_key
 
             # Use litellm streaming
             response = litellm.completion(**kwargs)
@@ -239,6 +247,7 @@ def stream_analysis_sse(
         for event in stream_llm_response(
             prompt=prompts["user"],
             system_prompt=prompts["system"],
+            task="analysis",
         ):
             yield format_sse_event(event)
 

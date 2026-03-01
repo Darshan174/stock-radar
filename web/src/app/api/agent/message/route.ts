@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { PROTECTED_ENDPOINTS, getPriceForEndpoint } from "@/lib/x402-config"
+import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
 
 /**
  * Agent Messaging Endpoint (XMTP-style over HTTP)
@@ -14,6 +15,9 @@ import { PROTECTED_ENDPOINTS, getPriceForEndpoint } from "@/lib/x402-config"
 const PROTOCOL_VERSION = "agent-xmtp-v1"
 
 export async function POST(request: NextRequest) {
+  const limited = await enforceRateLimit(request, RATE_BUCKETS.free)
+  if (limited) return limited
+
   let body: any
   try {
     body = await request.json()

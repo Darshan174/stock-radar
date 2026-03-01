@@ -1,11 +1,15 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { agentRegistry } from "@/lib/agent-registry"
+import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
 
 const AGENT_ADDRESS =
   process.env.AGENT_REGISTRY_ADDRESS ||
   "0x7f10a07e484263ee7f4debd27a8adac2b918b7f3969ee79d3b6da636c3666240"
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const limited = await enforceRateLimit(request, RATE_BUCKETS.free)
+  if (limited) return limited
+
   try {
     // Fetch full agent info (includes identity + reputation)
     const agentInfo = await agentRegistry.getAgentInfo(AGENT_ADDRESS)
@@ -74,8 +78,9 @@ export async function GET() {
       // Explorer link
       explorerUrl: `https://explorer.aptoslabs.com/account/${AGENT_ADDRESS}?network=testnet`,
     })
-  } catch (error: any) {
-    console.error("[reputation] Error:", error.message)
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error"
+    console.error("[reputation] Error:", message)
     return NextResponse.json(
       { error: "Failed to fetch on-chain agent data" },
       { status: 500 }

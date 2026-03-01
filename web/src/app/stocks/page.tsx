@@ -36,6 +36,33 @@ export default function StocksPage() {
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
+  async function waitForAnalyzeJob(jobId: string, timeoutMs = 180000) {
+    const startedAt = Date.now()
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const statusResponse = await fetch(`/api/analyze/status?jobId=${encodeURIComponent(jobId)}`, {
+        cache: "no-store",
+      })
+      const statusData = await statusResponse.json()
+
+      if (!statusResponse.ok) {
+        throw new Error(statusData.error || "Failed to fetch analysis status")
+      }
+
+      if (statusData.status === "succeeded") {
+        return statusData
+      }
+
+      if (statusData.status === "failed") {
+        throw new Error(statusData.error || "Analysis failed")
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+    }
+
+    throw new Error("Analysis timed out. Please try again.")
+  }
+
   async function fetchStocks() {
     try {
       const { data: stocksData, error } = await supabase
@@ -192,6 +219,14 @@ export default function StocksPage() {
         return
       }
 
+      if (!data.jobId) {
+        setError("Analysis job was not created")
+        return
+      }
+
+      setSuccess(`Analysis queued for ${newSymbol.toUpperCase()}...`)
+      await waitForAnalyzeJob(data.jobId)
+
       setSuccess(`Successfully added ${newSymbol.toUpperCase()}!`)
       setNewSymbol("")
 
@@ -202,7 +237,7 @@ export default function StocksPage() {
         fetchStocks()
       }, 1500)
     } catch (err) {
-      setError("Failed to connect to server. Make sure the backend is running.")
+      setError(err instanceof Error ? err.message : "Failed to connect to server. Make sure the backend is running.")
     } finally {
       setAdding(false)
     }
@@ -211,6 +246,7 @@ export default function StocksPage() {
   async function handleAnalyze(e: React.MouseEvent, symbol: string) {
     e.stopPropagation()
     setAnalyzing(symbol)
+    setError("")
 
     try {
       const response = await fetch("/api/analyze", {
@@ -219,11 +255,22 @@ export default function StocksPage() {
         body: JSON.stringify({ symbol }),
       })
 
-      if (response.ok) {
-        fetchStocks()
+      const data = await response.json()
+      if (!response.ok) {
+        setError(data.error || "Failed to start analysis")
+        return
       }
+
+      if (!data.jobId) {
+        setError("Analysis job was not created")
+        return
+      }
+
+      await waitForAnalyzeJob(data.jobId)
+      fetchStocks()
     } catch (err) {
       console.error("Failed to analyze:", err)
+      setError(err instanceof Error ? err.message : "Failed to analyze")
     } finally {
       setAnalyzing(null)
     }

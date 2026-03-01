@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
 
 const PERIOD_CONFIG: Record<
     string,
@@ -16,6 +17,9 @@ const PERIOD_CONFIG: Record<
 }
 
 export async function GET(request: NextRequest) {
+    const limited = await enforceRateLimit(request, RATE_BUCKETS.free)
+    if (limited) return limited
+
     const { searchParams } = new URL(request.url)
     const symbol = searchParams.get("symbol")
     const period = searchParams.get("period") || "3m"

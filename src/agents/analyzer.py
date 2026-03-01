@@ -18,9 +18,14 @@ from litellm import completion
 from agents.usage_tracker import get_tracker
 from agents.scorer import StockScorer
 
-# ML model integration (optional)
+# Config (optional)
 try:
     from config import settings as _cfg
+except ImportError:
+    _cfg = None
+
+# ML model integration (optional)
+try:
     from training.predictor import SignalPredictor
     ML_AVAILABLE = True
 except ImportError:
@@ -102,16 +107,42 @@ class StockAnalyzer:
     Fallback chain: ZAI GLM-4.7 (primary) -> Gemini (secondary)
     """
 
-    # Model fallback chain
-    MODELS = [
-        "openai/glm-4.7",                     # Primary - Zhipu AI GLM-4.7 (OpenAI-compatible)
-        "gemini/gemini-2.5-flash",            # Secondary - Google's fast model
-    ]
+    # Global fallback chain (used when no task-specific route exists)
+    DEFAULT_MODELS = ["openai/glm-4.7", "gemini/gemini-2.5-flash"]
+    # Task-based model routing defaults (can be overridden via LLM_TASK_ROUTES)
+    DEFAULT_TASK_ROUTES = {
+        "analysis": [
+            "groq/llama-3.1-70b-versatile",
+            "openai/glm-4.7",
+            "gemini/gemini-2.5-flash",
+        ],
+        "algo": [
+            "groq/llama-3.1-70b-versatile",
+            "openai/glm-4.7",
+            "gemini/gemini-2.5-flash",
+        ],
+        "news": [
+            "groq/llama-3.1-8b-instant",
+            "gemini/gemini-2.5-flash",
+            "openai/glm-4.7",
+        ],
+        "sentiment": [
+            "groq/llama-3.1-8b-instant",
+            "gemini/gemini-2.5-flash",
+            "openai/glm-4.7",
+        ],
+        "chat": [
+            "groq/llama-3.1-70b-versatile",
+            "openai/glm-4.7",
+            "gemini/gemini-2.5-flash",
+        ],
+    }
 
     def __init__(
         self,
         zai_key: Optional[str] = None,
         gemini_key: Optional[str] = None,
+        groq_key: Optional[str] = None,
         enable_rag: bool = True
     ):
         """
@@ -120,27 +151,48 @@ class StockAnalyzer:
         Args:
             zai_key: Zhipu AI (Z.AI) API key for GLM-5
             gemini_key: Google Gemini API key
+            groq_key: Groq API key
             enable_rag: Whether to enable RAG context retrieval for enhanced analysis
         """
         # Set API keys
-        self.zai_key = zai_key or os.getenv("ZAI_API_KEY")
-        self.zai_api_base = os.getenv("ZAI_API_BASE", "https://open.bigmodel.cn/api/coding/paas/v4")
-        self.gemini_key = gemini_key or os.getenv("GEMINI_API_KEY")
+        self.zai_key = zai_key or (_cfg.zai_api_key if _cfg else None) or os.getenv("ZAI_API_KEY")
+        self.zai_api_base = (
+            (_cfg.zai_api_base if _cfg else None)
+            or os.getenv("ZAI_API_BASE", "https://open.bigmodel.cn/api/coding/paas/v4")
+        )
+        self.gemini_key = gemini_key or (_cfg.gemini_api_key if _cfg else None) or os.getenv("GEMINI_API_KEY")
+        self.groq_key = groq_key or (_cfg.groq_api_key if _cfg else None) or os.getenv("GROQ_API_KEY")
 
         # Configure Gemini for LiteLLM
         if self.gemini_key:
             os.environ["GEMINI_API_KEY"] = self.gemini_key
+        if self.groq_key:
+            os.environ["GROQ_API_KEY"] = self.groq_key
 
-        # Build available models list - ZAI GLM-5 is primary
-        self.available_models = []
+        configured_defaults = (
+            list(_cfg.fallback_models) if _cfg and _cfg.fallback_models else list(self.DEFAULT_MODELS)
+        )
+        configured_routes = (
+            dict(_cfg.task_model_routes) if _cfg and _cfg.task_model_routes else {}
+        )
+        self.default_models = configured_defaults
+        self.task_routes = dict(self.DEFAULT_TASK_ROUTES)
+        self.task_routes.update(configured_routes)
 
-        # Primary: ZAI GLM-5 (OpenAI-compatible API)
-        if self.zai_key:
-            self.available_models.append(self.MODELS[0])  # openai/glm-4.7
+        # Build availability set from global fallback + all task routes.
+        candidate_models = list(self.default_models)
+        for models in self.task_routes.values():
+            candidate_models.extend(models)
 
-        # Secondary: Gemini (if key available)
-        if self.gemini_key:
-            self.available_models.append(self.MODELS[1])
+        unique_candidates = []
+        seen = set()
+        for model in candidate_models:
+            if model in seen:
+                continue
+            seen.add(model)
+            unique_candidates.append(model)
+
+        self.available_models = [m for m in unique_candidates if self._model_is_available(m)]
 
         # Initialize RAG retriever for enhanced analysis
         self.enable_rag = enable_rag and RAG_AVAILABLE
@@ -155,15 +207,54 @@ class StockAnalyzer:
                 logger.warning(f"Failed to initialize RAG components: {e}")
                 self.enable_rag = False
 
-        logger.info(f"StockAnalyzer initialized with models: {self.available_models}, RAG: {self.enable_rag}")
+        logger.info(
+            "StockAnalyzer initialized with models=%s task_routes=%s RAG=%s",
+            self.available_models,
+            sorted(self.task_routes.keys()),
+            self.enable_rag,
+        )
 
-    def _call_llm(self, prompt: str, system_prompt: str = "") -> tuple[str, str, int]:
+    def _model_is_available(self, model: str) -> bool:
+        """Check whether provider credentials exist for model."""
+        if model.startswith("openai/"):
+            return bool(self.zai_key)
+        if model.startswith("gemini/"):
+            return bool(self.gemini_key)
+        if model.startswith("groq/"):
+            return bool(self.groq_key)
+        return True
+
+    def _models_for_task(self, task: str = "default") -> List[str]:
+        """
+        Resolve model route for a task and keep only currently available models.
+
+        Falls back to global default order when no task route is defined.
+        """
+        task_key = (task or "default").lower()
+        route = self.task_routes.get(task_key, self.default_models)
+        routed = [m for m in route if m in self.available_models]
+        if routed:
+            return routed
+
+        # Final fallback if a route has zero available providers.
+        default_available = [m for m in self.default_models if m in self.available_models]
+        if default_available:
+            return default_available
+        return list(self.available_models)
+
+    def _call_llm(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        task: str = "default",
+    ) -> tuple[str, str, int]:
         """
         Call LLM with fallback chain.
 
         Args:
             prompt: User prompt
             system_prompt: System prompt
+            task: Logical LLM task (analysis/algo/news/chat/sentiment/default)
 
         Returns:
             Tuple of (response_text, model_used, tokens_used)
@@ -173,10 +264,14 @@ class StockAnalyzer:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        models = self._models_for_task(task=task)
+        if not models:
+            raise Exception("No available LLM providers configured for requested task.")
+
         last_error = None
-        for model in self.available_models:
+        for model in models:
             try:
-                logger.info(f"Trying model: {model}")
+                logger.info(f"Trying model for task={task}: {model}")
 
                 # Pass api_base and api_key for ZAI (OpenAI-compatible endpoint)
                 kwargs = dict(
@@ -188,6 +283,8 @@ class StockAnalyzer:
                 if model.startswith("openai/") and self.zai_key:
                     kwargs["api_base"] = self.zai_api_base
                     kwargs["api_key"] = self.zai_key
+                elif model.startswith("groq/") and self.groq_key:
+                    kwargs["api_key"] = self.groq_key
 
                 response = completion(**kwargs)
 
@@ -404,7 +501,9 @@ Provide your analysis in this exact JSON format:
 Respond with JSON only:"""
 
         try:
-            response_text, model_used, tokens = self._call_llm(prompt, system_prompt)
+            response_text, model_used, tokens = self._call_llm(
+                prompt, system_prompt, task="analysis"
+            )
             analysis = self._extract_json(response_text)
 
             if not analysis:
@@ -569,7 +668,9 @@ Provide your investment analysis in this exact JSON format:
 Respond with JSON only:"""
 
         try:
-            response_text, model_used, tokens = self._call_llm(prompt, system_prompt)
+            response_text, model_used, tokens = self._call_llm(
+                prompt, system_prompt, task="analysis"
+            )
             analysis = self._extract_json(response_text)
 
             if not analysis:
@@ -662,7 +763,7 @@ Provide a brief, clear explanation (2-3 sentences) of the likely catalyst for th
 If the news doesn't explain it, mention possible reasons (sector movement, market sentiment, technical breakout, etc.)."""
 
         try:
-            response_text, _, _ = self._call_llm(prompt)
+            response_text, _, _ = self._call_llm(prompt, task="news")
             return response_text.strip()
         except Exception as e:
             logger.error(f"Movement explanation failed: {e}")
@@ -720,7 +821,7 @@ Respond with JSON:
 }}"""
 
         try:
-            response_text, _, _ = self._call_llm(prompt)
+            response_text, _, _ = self._call_llm(prompt, task="analysis")
             result = self._extract_json(response_text)
             return result or {"is_valid": True, "confidence_adjustment": 0}
 
@@ -900,7 +1001,9 @@ Provide explanation in this JSON format:
 Respond with JSON only:"""
 
         try:
-            response_text, model_used, tokens = self._call_llm(prompt, system_prompt)
+            response_text, model_used, tokens = self._call_llm(
+                prompt, system_prompt, task="algo"
+            )
             llm_response = self._extract_json(response_text)
             
             if not llm_response:

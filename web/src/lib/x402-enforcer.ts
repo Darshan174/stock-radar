@@ -176,6 +176,7 @@ export async function withX402(
   // Bypass payment for internal app requests (injected by middleware)
   const internalKey = request.headers.get("X-Internal-Key")
   if (internalKey && internalKey === process.env.INTERNAL_API_KEY) {
+    console.info(`[x402] INTERNAL_API_KEY bypass for ${endpoint}`)
     return handler(request)
   }
 

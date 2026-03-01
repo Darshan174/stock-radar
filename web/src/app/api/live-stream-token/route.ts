@@ -1,6 +1,10 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const limited = await enforceRateLimit(request, RATE_BUCKETS.free)
+  if (limited) return limited
+
   const token =
     process.env.FINNHUB_API_KEY ||
     process.env.NEXT_PUBLIC_FINNHUB_API_KEY ||

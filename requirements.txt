@@ -41,6 +41,8 @@ prometheus-client>=0.20.0     # Prometheus metrics collection
 tenacity>=8.0.0               # Retry with exponential backoff
 redis>=5.0.0                  # Redis cache (optional, falls back to in-memory)
 websocket-client>=1.7.0       # Finnhub WebSocket for real-time stock prices (free)
+fastapi>=0.116.0              # Railway backend API
+uvicorn>=0.34.0               # ASGI server
 
 # -----------------------------------------------------------------------------
 # ML Training Pipeline

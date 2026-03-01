@@ -3,10 +3,9 @@ API Usage Tracker for Stock Radar.
 Tracks API usage with per-request summaries and threshold alerts.
 """
 
-import os
 import json
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional, Any, List, Callable
 
@@ -16,6 +15,7 @@ logger = logging.getLogger(__name__)
 API_LIMITS = {
     "zai": {"limit": 10000, "period": "daily", "unit": "requests"},
     "gemini": {"limit": 1500, "period": "daily", "unit": "requests"},
+    "groq": {"limit": 10000, "period": "daily", "unit": "requests"},
     "cohere": {"limit": 1000, "period": "monthly", "unit": "embeds"},
     "finnhub": {"limit": 30000, "period": "daily", "unit": "calls"},
     "ollama": {"limit": None, "period": None, "unit": "calls"},  # Local, no limit

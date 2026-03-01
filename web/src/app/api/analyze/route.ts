@@ -1,68 +1,51 @@
 import { NextRequest, NextResponse } from "next/server"
-import { exec } from "child_process"
-import { promisify } from "util"
-import path from "path"
+import { backendErrorResponse, backendRequest } from "@/lib/backend-client"
+import type { AnalyzeJobCreated } from "@/lib/analyze-contracts"
 import { withX402 } from "@/lib/x402-enforcer"
-
-const execAsync = promisify(exec)
+import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
+import { validateSymbol } from "@/lib/input-validation"
 
 async function handleAnalyze(request: NextRequest): Promise<NextResponse> {
-  const { symbol, mode = "intraday", period = "max", fetchFullHistory = true } = await request.json()
+  const { symbol, mode = "intraday", period = "max" } = await request.json()
 
-  if (!symbol) {
-    return NextResponse.json({ error: "Symbol is required" }, { status: 400 })
+  const symbolCheck = validateSymbol(symbol)
+  if (!symbolCheck.valid) {
+    return NextResponse.json({ error: symbolCheck.error }, { status: 400 })
   }
 
-  const symbolRegex = /^[A-Z0-9.\-^]+$/i
-  if (!symbolRegex.test(symbol)) {
-    return NextResponse.json({ error: "Invalid symbol format" }, { status: 400 })
+  const allowedModes = new Set(["intraday", "longterm"])
+  if (!allowedModes.has(mode)) {
+    return NextResponse.json({ error: "Invalid mode" }, { status: 400 })
   }
 
   const validPeriods = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"]
   const effectivePeriod = validPeriods.includes(period) ? period : "max"
 
-  const projectPath = path.join(process.cwd(), "..")
-
-  const { stdout, stderr } = await execAsync(
-    `cd "${projectPath}" && python3 main.py analyze ${symbol} --mode ${mode} --period ${effectivePeriod}`,
-    { timeout: 180000 }
-  )
-
-  if (stderr && !stderr.includes("INFO") && !stderr.includes("WARNING")) {
-    console.error("Analysis stderr:", stderr)
-  }
-
-  const fatalErrorPatterns = [
-    /^Error:/im,
-    /Analysis failed for/i,
-    /Failed to fetch/i,
-    /Invalid symbol/i,
-    /No data found/i,
-  ]
-
-  const hasFatalError = fatalErrorPatterns.some(pattern => pattern.test(stdout))
-  const hasSuccessIndicators =
-    stdout.includes("Analysis complete") ||
-    stdout.includes("stored successfully") ||
-    stdout.includes("Saved analysis")
-
-  if (hasFatalError && !hasSuccessIndicators) {
-    const errorMatch = stdout.match(/Error[:\s]+(.+)/i)
-    return NextResponse.json(
-      { error: errorMatch ? errorMatch[1] : "Analysis failed" },
-      { status: 500 }
-    )
-  }
+  const created = await backendRequest<AnalyzeJobCreated>("/v1/analyze/jobs", {
+    method: "POST",
+    timeoutMs: 5000,
+    body: {
+      symbol: symbolCheck.value,
+      mode,
+      period: effectivePeriod,
+    },
+  })
 
   return NextResponse.json({
-    success: true,
-    symbol: symbol.toUpperCase(),
-    mode,
-    message: `Analysis completed for ${symbol}`,
-    output: stdout,
-  })
+    jobId: created.jobId,
+    statusUrl: `/api/analyze/status?jobId=${encodeURIComponent(created.jobId)}`,
+    status: created.status,
+  }, { status: 202 })
 }
 
 export async function POST(request: NextRequest) {
-  return withX402(request, "/api/analyze", handleAnalyze)
+  const limited = await enforceRateLimit(request, RATE_BUCKETS.analyzeJobs)
+  if (limited) return limited
+
+  try {
+    return await withX402(request, "/api/analyze", handleAnalyze)
+  } catch (error) {
+    console.error("Analyze route error:", error)
+    return backendErrorResponse(error, "Failed to submit analysis job")
+  }
 }

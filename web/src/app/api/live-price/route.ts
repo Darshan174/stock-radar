@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { withX402 } from "@/lib/x402-enforcer"
+import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
 
 async function handleLivePrice(request: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(request.url)
@@ -50,5 +51,8 @@ async function handleLivePrice(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function GET(request: NextRequest) {
+  const limited = await enforceRateLimit(request, RATE_BUCKETS.paid)
+  if (limited) return limited
+
   return withX402(request, "/api/live-price", handleLivePrice)
 }

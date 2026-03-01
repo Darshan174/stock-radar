@@ -24,6 +24,11 @@ from agents.storage import StockStorage
 from agents.rag_retriever import RAGRetriever, RAGContext
 from agents.usage_tracker import get_tracker
 
+try:
+    from config import settings
+except ImportError:
+    settings = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,11 +67,29 @@ class StockChatAssistant:
     - Maintains conversation history for context
     """
 
-    # LLM model fallback chain
-    MODELS = [
-        "openai/glm-4.7",
-        "gemini/gemini-2.5-flash",
-    ]
+    DEFAULT_MODELS = ["openai/glm-4.7", "gemini/gemini-2.5-flash"]
+    DEFAULT_TASK_ROUTES = {
+        "chat": [
+            "groq/llama-3.1-70b-versatile",
+            "openai/glm-4.7",
+            "gemini/gemini-2.5-flash",
+        ],
+        "analysis": [
+            "groq/llama-3.1-70b-versatile",
+            "openai/glm-4.7",
+            "gemini/gemini-2.5-flash",
+        ],
+        "sentiment": [
+            "groq/llama-3.1-8b-instant",
+            "gemini/gemini-2.5-flash",
+            "openai/glm-4.7",
+        ],
+        "news": [
+            "groq/llama-3.1-8b-instant",
+            "gemini/gemini-2.5-flash",
+            "openai/glm-4.7",
+        ],
+    }
 
     SYSTEM_PROMPT = """You are Stock Radar's AI analyst — a sharp, data-driven trading assistant.
 
@@ -113,7 +136,8 @@ Rules:
         storage: Optional[StockStorage] = None,
         retriever: Optional[RAGRetriever] = None,
         zai_key: Optional[str] = None,
-        gemini_key: Optional[str] = None
+        gemini_key: Optional[str] = None,
+        groq_key: Optional[str] = None,
     ):
         """
         Initialize the chat assistant.
@@ -123,30 +147,84 @@ Rules:
             retriever: RAGRetriever instance
             zai_key: Zhipu AI (Z.AI) API key for GLM-5
             gemini_key: Gemini API key
+            groq_key: Groq API key
         """
         self.storage = storage or StockStorage()
         self.retriever = retriever or RAGRetriever(storage=self.storage)
 
         # Configure API keys
-        self.zai_key = zai_key or os.getenv("ZAI_API_KEY")
-        self.zai_api_base = os.getenv("ZAI_API_BASE", "https://open.bigmodel.cn/api/coding/paas/v4")
-        self.gemini_key = gemini_key or os.getenv("GEMINI_API_KEY")
+        self.zai_key = zai_key or (settings.zai_api_key if settings else None) or os.getenv("ZAI_API_KEY")
+        self.zai_api_base = (
+            (settings.zai_api_base if settings else None)
+            or os.getenv("ZAI_API_BASE", "https://open.bigmodel.cn/api/coding/paas/v4")
+        )
+        self.gemini_key = (
+            gemini_key or (settings.gemini_api_key if settings else None) or os.getenv("GEMINI_API_KEY")
+        )
+        self.groq_key = groq_key or (settings.groq_api_key if settings else None) or os.getenv("GROQ_API_KEY")
 
         if self.gemini_key:
             os.environ["GEMINI_API_KEY"] = self.gemini_key
+        if self.groq_key:
+            os.environ["GROQ_API_KEY"] = self.groq_key
 
-        # Build available models list
-        self.available_models = []
-        if self.zai_key:
-            self.available_models.append(self.MODELS[0])  # openai/glm-4.7
-        if self.gemini_key:
-            self.available_models.append(self.MODELS[1])
+        configured_defaults = (
+            list(settings.fallback_models) if settings and settings.fallback_models else list(self.DEFAULT_MODELS)
+        )
+        configured_routes = (
+            dict(settings.task_model_routes) if settings and settings.task_model_routes else {}
+        )
+        self.default_models = configured_defaults
+        self.task_routes = dict(self.DEFAULT_TASK_ROUTES)
+        self.task_routes.update(configured_routes)
+
+        # Build provider-available model set from defaults + all task routes.
+        candidate_models = list(self.default_models)
+        for models in self.task_routes.values():
+            candidate_models.extend(models)
+
+        unique_candidates = []
+        seen = set()
+        for model in candidate_models:
+            if model in seen:
+                continue
+            seen.add(model)
+            unique_candidates.append(model)
+
+        self.available_models = [m for m in unique_candidates if self._model_is_available(m)]
 
         # Conversation state
         self.session_id: Optional[str] = None
         self.conversation_history: List[ChatMessage] = []
 
-        logger.info(f"StockChatAssistant initialized with models: {self.available_models}")
+        logger.info(
+            "StockChatAssistant initialized with models=%s task_routes=%s",
+            self.available_models,
+            sorted(self.task_routes.keys()),
+        )
+
+    def _model_is_available(self, model: str) -> bool:
+        """Check provider credentials for a model."""
+        if model.startswith("openai/"):
+            return bool(self.zai_key)
+        if model.startswith("gemini/"):
+            return bool(self.gemini_key)
+        if model.startswith("groq/"):
+            return bool(self.groq_key)
+        return True
+
+    def _models_for_task(self, task: str = "default") -> List[str]:
+        """Resolve model order for task, falling back to global defaults."""
+        task_key = (task or "default").lower()
+        route = self.task_routes.get(task_key, self.default_models)
+        routed = [m for m in route if m in self.available_models]
+        if routed:
+            return routed
+
+        default_available = [m for m in self.default_models if m in self.available_models]
+        if default_available:
+            return default_available
+        return list(self.available_models)
 
     def start_session(self, user_id: Optional[str] = None) -> str:
         """
@@ -515,7 +593,8 @@ Rules:
     def _call_llm(
         self,
         messages: List[Dict[str, str]],
-        temperature: float = 0.3
+        temperature: float = 0.3,
+        task: str = "chat",
     ) -> tuple[str, str, int]:
         """
         Call LLM with fallback chain.
@@ -523,15 +602,20 @@ Rules:
         Args:
             messages: Chat messages
             temperature: Response temperature
+            task: Logical LLM task route key
 
         Returns:
             Tuple of (response_text, model_used, tokens_used)
         """
+        models = self._models_for_task(task=task)
+        if not models:
+            raise Exception("No available LLM providers configured for requested task.")
+
         last_error = None
 
-        for model in self.available_models:
+        for model in models:
             try:
-                logger.info(f"Trying model: {model}")
+                logger.info(f"Trying model for task={task}: {model}")
 
                 # Pass api_base and api_key for ZAI (OpenAI-compatible endpoint)
                 kwargs = dict(
@@ -543,6 +627,8 @@ Rules:
                 if model.startswith("openai/") and self.zai_key:
                     kwargs["api_base"] = self.zai_api_base
                     kwargs["api_key"] = self.zai_key
+                elif model.startswith("groq/") and self.groq_key:
+                    kwargs["api_key"] = self.groq_key
 
                 response = completion(**kwargs)
 
@@ -661,7 +747,7 @@ available — don't summarize away the numbers. Explain technical terms inline."
 
         # Call LLM
         try:
-            answer, model_used, tokens_used = self._call_llm(messages)
+            answer, model_used, tokens_used = self._call_llm(messages, task="chat")
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             answer = f"I apologize, but I encountered an error processing your question: {str(e)}"

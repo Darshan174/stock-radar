@@ -1,6 +1,19 @@
 import { NextRequest, NextResponse } from "next/server"
+import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
+
+interface IntradayCandle {
+    time: number
+    open: number
+    high: number
+    low: number
+    close: number
+    volume: number
+}
 
 export async function GET(request: NextRequest) {
+    const limited = await enforceRateLimit(request, RATE_BUCKETS.free)
+    if (limited) return limited
+
     const { searchParams } = new URL(request.url)
     const symbol = searchParams.get("symbol")
     const interval = searchParams.get("interval") || "5m" // 1m, 5m, 15m, 1h, 1d
@@ -36,7 +49,7 @@ export async function GET(request: NextRequest) {
         const quote = result.indicators?.quote?.[0] || {}
 
         // Convert to OHLCV format with Unix timestamps for time axis
-        const candles = timestamps.map((ts: number, i: number) => {
+        const candles = timestamps.map((ts: number, i: number): IntradayCandle | null => {
             const open = quote.open?.[i]
             const high = quote.high?.[i]
             const low = quote.low?.[i]
@@ -56,16 +69,16 @@ export async function GET(request: NextRequest) {
                 close: parseFloat(close.toFixed(2)),
                 volume: volume || 0,
             }
-        }).filter(Boolean)
+        }).filter((candle): candle is IntradayCandle => candle !== null)
 
         // Get today's aggregated data for mixing with historical
         let todayCandle = null
         if (candles.length > 0 && (interval === "1m" || interval === "5m" || interval === "15m")) {
             const todayOpen = candles[0].open
-            const todayHigh = Math.max(...candles.map((c: any) => c.high))
-            const todayLow = Math.min(...candles.map((c: any) => c.low))
+            const todayHigh = Math.max(...candles.map((c) => c.high))
+            const todayLow = Math.min(...candles.map((c) => c.low))
             const todayClose = candles[candles.length - 1].close
-            const todayVolume = candles.reduce((acc: number, c: any) => acc + c.volume, 0)
+            const todayVolume = candles.reduce((acc, c) => acc + c.volume, 0)
 
             // Get date string for the daily candle
             const firstDate = new Date(candles[0].time * 1000)

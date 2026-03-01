@@ -3,6 +3,7 @@ import { withX402 } from "@/lib/x402-enforcer"
 import { handleMomentumSignal } from "@/app/api/agent/momentum/route"
 import { handleSocialSentiment } from "@/app/api/agent/social-sentiment/route"
 import { handleFundamentals } from "@/app/api/fundamentals/route"
+import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
 
 /**
  * Self-Orchestration Endpoint
@@ -135,5 +136,8 @@ async function handleOrchestrate(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function POST(request: NextRequest) {
+  const limited = await enforceRateLimit(request, RATE_BUCKETS.paid)
+  if (limited) return limited
+
   return withX402(request, "/api/agent/orchestrate", handleOrchestrate)
 }

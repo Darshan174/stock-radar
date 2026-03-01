@@ -1,7 +1,8 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { promises as fs } from "fs"
 import path from "path"
 import os from "os"
+import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
 
 // API limits configuration (should match usage_tracker.py)
 const API_LIMITS: Record<string, { limit: number | null; period: string; unit: string }> = {
@@ -12,7 +13,10 @@ const API_LIMITS: Record<string, { limit: number | null; period: string; unit: s
   ollama: { limit: null, period: "unlimited", unit: "calls" },
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const limited = await enforceRateLimit(request, RATE_BUCKETS.free)
+  if (limited) return limited
+
   try {
     const usagePath = path.join(os.homedir(), ".stock-radar", "usage.json")
 

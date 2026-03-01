@@ -31,6 +31,7 @@ import {
 import { RAGBadge } from "@/components/rag-badge"
 import { supabase, Stock, Analysis } from "@/lib/supabase"
 import { useLiveStockData } from "@/hooks/use-live-stock-data"
+import type { AnalyzeJobCreated, AnalyzeJobStatus } from "@/lib/analyze-contracts"
 
 interface StockDetail extends Stock {
   analyses: Analysis[]
@@ -89,6 +90,20 @@ function getSignalColor(signal: string) {
   }
 }
 
+function getAnalyzeStatusClass(state: "idle" | "queued" | "running" | "succeeded" | "failed") {
+  switch (state) {
+    case "queued":
+    case "running":
+      return "text-blue-500"
+    case "succeeded":
+      return "text-green-500"
+    case "failed":
+      return "text-red-500"
+    default:
+      return "text-muted-foreground"
+  }
+}
+
 export default function StockDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -98,6 +113,8 @@ export default function StockDetailPage() {
   const [fundamentals, setFundamentals] = useState<StockInfoFundamentals | null>(null)
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
+  const [analyzeState, setAnalyzeState] = useState<"idle" | "queued" | "running" | "succeeded" | "failed">("idle")
+  const [analyzeMessage, setAnalyzeMessage] = useState("")
   const [period, setPeriod] = useState("1d")
   const [chartData, setChartData] = useState<ChartCandle[]>([])
   const [chartMeta, setChartMeta] = useState<ChartMeta>({
@@ -294,8 +311,40 @@ export default function StockDetailPage() {
     })
   }, [livePrice, chartMeta.isIntraday, intervalSeconds, chartData.length])
 
+  async function waitForAnalyzeJob(jobId: string, timeoutMs = 180000): Promise<AnalyzeJobStatus> {
+    const startedAt = Date.now()
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const statusResponse = await fetch(`/api/analyze/status?jobId=${encodeURIComponent(jobId)}`, {
+        cache: "no-store",
+      })
+
+      const statusData = (await statusResponse.json()) as AnalyzeJobStatus & { error?: string }
+      if (!statusResponse.ok) {
+        throw new Error(statusData.error || "Failed to fetch analysis status")
+      }
+
+      if (statusData.status === "succeeded") {
+        return statusData
+      }
+
+      if (statusData.status === "failed") {
+        throw new Error(statusData.error || "Analysis failed")
+      }
+
+      setAnalyzeState(statusData.status === "queued" ? "queued" : "running")
+      setAnalyzeMessage(statusData.status === "queued" ? "Analysis queued..." : "Analysis running...")
+
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+    }
+
+    throw new Error("Analysis timed out. Please try again.")
+  }
+
   async function handleAnalyze() {
     setAnalyzing(true)
+    setAnalyzeState("queued")
+    setAnalyzeMessage("Submitting analysis job...")
     try {
       const response = await fetch("/api/analyze", {
         method: "POST",
@@ -303,11 +352,28 @@ export default function StockDetailPage() {
         body: JSON.stringify({ symbol }),
       })
 
-      if (response.ok) {
-        window.location.reload()
+      const data = (await response.json()) as Partial<AnalyzeJobCreated> & { error?: string }
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to submit analysis job")
       }
+
+      if (!data.jobId) {
+        throw new Error("Analysis job was not created")
+      }
+
+      setAnalyzeState("running")
+      setAnalyzeMessage("Analysis running...")
+      await waitForAnalyzeJob(data.jobId)
+
+      setAnalyzeState("succeeded")
+      setAnalyzeMessage("Analysis complete. Refreshing...")
+      window.setTimeout(() => {
+        window.location.reload()
+      }, 900)
     } catch (error) {
       console.error("Analysis error:", error)
+      setAnalyzeState("failed")
+      setAnalyzeMessage(error instanceof Error ? error.message : "Analysis failed")
     } finally {
       setAnalyzing(false)
     }
@@ -377,20 +443,25 @@ export default function StockDetailPage() {
             <p className="text-muted-foreground">{stock.name}</p>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          <LivePriceTicker
-            symbol={stock.symbol}
-            currency={stock.currency === "INR" ? "\u20B9" : "$"}
-            livePriceOverride={livePrice}
-          />
-          <Button onClick={handleAnalyze} disabled={analyzing}>
-            {analyzing ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <Play className="h-4 w-4 mr-2" />
-            )}
-            Analyze
-          </Button>
+        <div className="flex flex-col items-end gap-1.5">
+          <div className="flex items-center gap-4">
+            <LivePriceTicker
+              symbol={stock.symbol}
+              currency={stock.currency === "INR" ? "\u20B9" : "$"}
+              livePriceOverride={livePrice}
+            />
+            <Button onClick={handleAnalyze} disabled={analyzing}>
+              {analyzing ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4 mr-2" />
+              )}
+              Analyze
+            </Button>
+          </div>
+          {analyzeState !== "idle" && (
+            <p className={`text-xs ${getAnalyzeStatusClass(analyzeState)}`}>{analyzeMessage}</p>
+          )}
         </div>
       </div>
 
