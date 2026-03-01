@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
                 close: parseFloat(close.toFixed(2)),
                 volume: volume || 0,
             }
-        }).filter((candle): candle is IntradayCandle => candle !== null)
+        }).filter((candle: IntradayCandle | null): candle is IntradayCandle => candle !== null)
 
         // Get today's aggregated data for mixing with historical
         let todayCandle = null
