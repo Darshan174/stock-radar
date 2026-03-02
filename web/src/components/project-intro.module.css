@@ -62,7 +62,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 2.5rem;
+  padding: 1rem 2.75rem;
   backdrop-filter: blur(20px) saturate(1.4);
   background: rgb(5 13 0 / 0.7);
   border-bottom: 1px solid var(--sr-glass-border);
@@ -73,6 +73,7 @@
   display: flex;
   align-items: center;
   gap: 0.65rem;
+  margin-left: 0.35rem;
   font-weight: 700;
   font-size: 1.15rem;
   letter-spacing: -0.02em;
@@ -143,6 +144,22 @@
   text-align: center;
 }
 
+.heroGlow {
+  position: absolute;
+  width: min(76vw, 48rem);
+  height: min(76vw, 48rem);
+  top: 48%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 30% 30%, rgb(159 232 112 / 0.2), transparent 52%),
+    radial-gradient(circle at 70% 70%, rgb(78 201 176 / 0.14), transparent 56%);
+  filter: blur(56px);
+  z-index: -1;
+}
+
 .heroBadge {
   display: inline-flex;
   align-items: center;
@@ -157,6 +174,7 @@
   text-transform: uppercase;
   color: var(--sr-accent-cyan);
   margin-bottom: 2rem;
+  box-shadow: 0 0 24px rgb(159 232 112 / 0.08);
   animation: fadeSlideUp 0.8s ease forwards;
   opacity: 0;
 }
@@ -202,6 +220,8 @@
   position: relative;
   display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
+  min-width: clamp(11ch, 32vw, 19ch);
   min-height: 1.1em;
 }
 
@@ -220,7 +240,7 @@
   max-width: 42rem;
   font-size: clamp(1rem, 2vw, 1.22rem);
   line-height: 1.65;
-  color: var(--sr-text-secondary);
+  color: #b7c7a8;
   margin: 0 auto 2.5rem;
   animation: fadeSlideUp 0.8s 0.3s ease forwards;
   opacity: 0;
@@ -230,8 +250,30 @@
   display: flex;
   align-items: center;
   gap: 1rem;
+  margin-bottom: 1.2rem;
   animation: fadeSlideUp 0.8s 0.45s ease forwards;
   opacity: 0;
+}
+
+.heroSignals {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  animation: fadeSlideUp 0.8s 0.55s ease forwards;
+  opacity: 0;
+}
+
+.heroSignalPill {
+  padding: 0.45rem 0.82rem;
+  border-radius: 999px;
+  border: 1px solid rgb(159 232 112 / 0.2);
+  background: rgb(10 21 5 / 0.62);
+  color: #b9d1a7;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .btnPrimary {
@@ -1039,6 +1081,10 @@
     padding: 0.75rem 1.25rem;
   }
 
+  .navLogo {
+    margin-left: 0;
+  }
+
   .navLinks {
     display: none;
   }
@@ -1054,6 +1100,11 @@
   .heroActions {
     flex-direction: column;
     width: 100%;
+  }
+
+  .heroSignals {
+    width: 100%;
+    justify-content: center;
   }
 
   .btnPrimary,

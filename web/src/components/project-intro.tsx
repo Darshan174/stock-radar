@@ -46,7 +46,7 @@ const monoFont = IBM_Plex_Mono({
 
 // ─── Typewriter Effect ────────────────────────────────────────
 const TYPEWRITER_PHRASES = [
-  "Financial Intelligence",
+  "Financial Analyst",
   "Autonomous Agent",
   "Micropayment Protocol",
   "On-Chain Identity",
@@ -56,31 +56,44 @@ const TYPEWRITER_PHRASES = [
 function useTypewriter(phrases: string[], typingSpeed = 80, deletingSpeed = 40, pauseTime = 2000) {
   const [text, setText] = useState("")
   const [phraseIndex, setPhraseIndex] = useState(0)
-  const [isDeleting, setIsDeleting] = useState(false)
+  const [phase, setPhase] = useState<"typing" | "holding" | "deleting">("typing")
 
   useEffect(() => {
     const currentPhrase = phrases[phraseIndex]
+    let timeoutMs = typingSpeed
 
-    const timeout = setTimeout(
-      () => {
-        if (!isDeleting) {
-          setText(currentPhrase.slice(0, text.length + 1))
-          if (text.length + 1 === currentPhrase.length) {
-            setTimeout(() => setIsDeleting(true), pauseTime)
-          }
-        } else {
-          setText(currentPhrase.slice(0, text.length - 1))
-          if (text.length === 0) {
-            setIsDeleting(false)
-            setPhraseIndex((prev) => (prev + 1) % phrases.length)
-          }
+    if (phase === "holding") {
+      // Keep shorter phrases visible slightly longer so cycle speed feels consistent.
+      timeoutMs = pauseTime + Math.max(0, 18 - currentPhrase.length) * 90
+    } else if (phase === "deleting") {
+      timeoutMs = deletingSpeed
+    }
+
+    const timeout = setTimeout(() => {
+      if (phase === "typing") {
+        const next = currentPhrase.slice(0, text.length + 1)
+        setText(next)
+        if (next.length === currentPhrase.length) {
+          setPhase("holding")
         }
-      },
-      isDeleting ? deletingSpeed : typingSpeed
-    )
+        return
+      }
+
+      if (phase === "holding") {
+        setPhase("deleting")
+        return
+      }
+
+      const next = currentPhrase.slice(0, Math.max(0, text.length - 1))
+      setText(next)
+      if (next.length === 0) {
+        setPhase("typing")
+        setPhraseIndex((prev) => (prev + 1) % phrases.length)
+      }
+    }, timeoutMs)
 
     return () => clearTimeout(timeout)
-  }, [text, phraseIndex, isDeleting, phrases, typingSpeed, deletingSpeed, pauseTime])
+  }, [text, phraseIndex, phase, phrases, typingSpeed, deletingSpeed, pauseTime])
 
   return text
 }
@@ -451,6 +464,7 @@ export function ProjectIntro({ onEnter }: ProjectIntroProps) {
 
       {/* ── Hero ── */}
       <section className={styles.hero}>
+        <div className={styles.heroGlow} aria-hidden="true" />
         <div className={styles.heroBadge}>
           <span className={styles.heroBadgeDot} />
           Autonomous Agent on Aptos
@@ -480,6 +494,12 @@ export function ProjectIntro({ onEnter }: ProjectIntroProps) {
             Explore Features
             <Activity size={16} />
           </button>
+        </div>
+
+        <div className={styles.heroSignals}>
+          <div className={styles.heroSignalPill}>Real-time market feed</div>
+          <div className={styles.heroSignalPill}>x402 micropayments</div>
+          <div className={styles.heroSignalPill}>On-chain reputation</div>
         </div>
       </section>
 
