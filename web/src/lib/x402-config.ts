@@ -18,7 +18,6 @@ export const PROTECTED_ENDPOINTS: X402ProtectedRoute[] = [
   { path: "/api/agent/social-sentiment", price: 100 },
   { path: "/api/agent/support-resistance", price: 100 },
   { path: "/api/agent/orchestrate", price: 400 },
-  { path: "/api/analyze", price: 500 },
   { path: "/api/fundamentals", price: 100 },
   { path: "/api/live-price", price: 50 },
 ]

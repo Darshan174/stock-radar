@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { backendErrorResponse, backendRequest } from "@/lib/backend-client"
 import type { AnalyzeJobCreated } from "@/lib/analyze-contracts"
-import { withX402 } from "@/lib/x402-enforcer"
 import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
 import { validateSymbol } from "@/lib/input-validation"
 
@@ -43,7 +42,7 @@ export async function POST(request: NextRequest) {
   if (limited) return limited
 
   try {
-    return await withX402(request, "/api/analyze", handleAnalyze)
+    return await handleAnalyze(request)
   } catch (error) {
     console.error("Analyze route error:", error)
     return backendErrorResponse(error, "Failed to submit analysis job")

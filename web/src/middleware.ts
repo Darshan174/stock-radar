@@ -15,7 +15,6 @@ export function middleware(request: NextRequest) {
   // Check if this is a protected API route
   const protectedPaths = [
     "/api/agent/",
-    "/api/analyze",
     "/api/fundamentals",
     "/api/live-price",
   ]
