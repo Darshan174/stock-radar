@@ -1,4 +1,4 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js'
 
 const rawSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const rawSupabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -12,27 +12,11 @@ if (!hasSupabaseEnv && typeof window !== 'undefined') {
     )
 }
 
-let supabaseClient: SupabaseClient | null = null
-
-function getSupabaseClient(): SupabaseClient {
-    if (supabaseClient) return supabaseClient
-
-    // Keep app booting even when envs are missing so we can render a clear UI error instead of crashing.
-    const resolvedUrl = supabaseUrl || 'https://example.supabase.co'
-    const resolvedKey = supabaseKey || 'public-anon-key-placeholder'
-
-    supabaseClient = createClient(resolvedUrl, resolvedKey)
-    return supabaseClient
-}
-
-// Lazy proxy prevents createClient() from running during SSR module evaluation.
-export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
-    get(_target, prop, receiver) {
-        const client = getSupabaseClient()
-        const value = Reflect.get(client, prop, receiver)
-        return typeof value === 'function' ? value.bind(client) : value
-    },
-})
+// Keep app booting even when envs are missing so we can render a clear UI error instead of crashing.
+export const supabase = createClient(
+    supabaseUrl || 'https://example.supabase.co',
+    supabaseKey || 'public-anon-key-placeholder'
+)
 export { hasSupabaseEnv }
 
 // Database types
