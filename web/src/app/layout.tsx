@@ -22,9 +22,11 @@ const themeScript = `
 (function() {
   try {
     var theme = localStorage.getItem('theme');
+    if (theme === 'device') theme = 'system';
+    if (!theme) theme = 'system';
     if (theme === 'light') {
       document.documentElement.classList.remove('dark');
-    } else if (theme === 'device') {
+    } else if (theme === 'system') {
       if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
         document.documentElement.classList.add('dark');
       } else {
@@ -43,7 +45,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`dark ${inter.variable}`} suppressHydrationWarning>
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>

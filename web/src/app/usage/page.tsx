@@ -79,7 +79,7 @@ export default function UsagePage() {
 
   if (loading) {
     return (
-      <div className="p-8">
+      <div className="app-page">
         <div className="mb-8">
           <Skeleton className="h-9 w-32 mb-2" />
           <Skeleton className="h-5 w-48" />
@@ -98,11 +98,11 @@ export default function UsagePage() {
   const totalTokens = Object.values(usage?.services || {}).reduce((sum, s) => sum + s.tokens, 0)
 
   return (
-    <div className="p-8">
+    <div className="app-page">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold">API Usage</h1>
-          <p className="text-muted-foreground">Track your API consumption and token usage</p>
+          <h1 className="app-page-title">API Usage</h1>
+          <p className="app-page-subtitle">Track your API consumption and token usage</p>
         </div>
         <Button variant="outline" onClick={handleRefresh} disabled={refreshing}>
           <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />

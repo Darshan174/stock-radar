@@ -1,9 +1,39 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+const rawSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const rawSupabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const supabaseUrl = rawSupabaseUrl?.trim()
+const supabaseKey = rawSupabaseKey?.trim()
+const hasSupabaseEnv = Boolean(supabaseUrl && supabaseKey)
 
-export const supabase = createClient(supabaseUrl, supabaseKey)
+if (!hasSupabaseEnv && typeof window !== 'undefined') {
+    console.error(
+        "Missing Supabase env vars. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel."
+    )
+}
+
+let supabaseClient: SupabaseClient | null = null
+
+function getSupabaseClient(): SupabaseClient {
+    if (supabaseClient) return supabaseClient
+
+    // Keep app booting even when envs are missing so we can render a clear UI error instead of crashing.
+    const resolvedUrl = supabaseUrl || 'https://example.supabase.co'
+    const resolvedKey = supabaseKey || 'public-anon-key-placeholder'
+
+    supabaseClient = createClient(resolvedUrl, resolvedKey)
+    return supabaseClient
+}
+
+// Lazy proxy prevents createClient() from running during SSR module evaluation.
+export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
+    get(_target, prop, receiver) {
+        const client = getSupabaseClient()
+        const value = Reflect.get(client, prop, receiver)
+        return typeof value === 'function' ? value.bind(client) : value
+    },
+})
+export { hasSupabaseEnv }
 
 // Database types
 export interface Stock {

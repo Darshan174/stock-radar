@@ -3,12 +3,16 @@
 import { ChatAssistant } from "@/components/chat-assistant"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Sparkles, Database, Brain, MessageSquare, TrendingUp, Newspaper, FileText } from "lucide-react"
-import { RAGBadge } from "@/components/rag-badge"
+import { Database, Brain, MessageSquare, TrendingUp, Newspaper, FileText } from "lucide-react"
 
 export default function ChatPage() {
   return (
-    <div className="p-6 h-screen flex flex-col">
+    <div className="app-page h-[calc(100vh-1rem)] flex flex-col">
+      <div className="app-page-header mb-4">
+        <h1 className="app-page-title">AI Chat</h1>
+        <p className="app-page-subtitle">RAG-powered assistant for stock and market questions</p>
+      </div>
+
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-0">
         {/* Chat Interface */}
         <div className="lg:col-span-3 min-h-0">
@@ -105,7 +109,7 @@ export default function ChatPage() {
                   key={idx}
                   className="text-xs text-muted-foreground p-2 rounded bg-muted/50 hover:bg-muted cursor-pointer transition-colors"
                 >
-                  "{question}"
+                  &quot;{question}&quot;
                 </div>
               ))}
             </CardContent>

@@ -86,7 +86,7 @@ export default function SignalsPage() {
 
   if (loading) {
     return (
-      <div className="p-8">
+      <div className="app-page">
         <div className="mb-8">
           <Skeleton className="h-9 w-32 mb-2" />
           <Skeleton className="h-5 w-64" />
@@ -97,10 +97,10 @@ export default function SignalsPage() {
   }
 
   return (
-    <div className="p-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold">Signals</h1>
-        <p className="text-muted-foreground">Trading signals from AI analysis</p>
+    <div className="app-page">
+      <div className="app-page-header">
+        <h1 className="app-page-title">Signals</h1>
+        <p className="app-page-subtitle">Trading signals from AI analysis</p>
       </div>
 
       <Card>

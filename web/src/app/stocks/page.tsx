@@ -278,7 +278,7 @@ export default function StocksPage() {
 
   if (loading) {
     return (
-      <div className="p-8">
+      <div className="app-page">
         <div className="flex items-center justify-between mb-8">
           <div>
             <Skeleton className="h-9 w-32 mb-2" />
@@ -296,11 +296,11 @@ export default function StocksPage() {
   }
 
   return (
-    <div className="p-8">
+    <div className="app-page">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold">Watchlist</h1>
-          <p className="text-muted-foreground">Manage your tracked stocks</p>
+          <h1 className="app-page-title">Watchlist</h1>
+          <p className="app-page-subtitle">Manage your tracked stocks</p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={(open) => {
           setDialogOpen(open)

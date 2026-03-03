@@ -121,13 +121,13 @@ function useParticles(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
     let animationId: number
     const particles: Particle[] = []
     const COLORS = [
-      "159, 232, 112",  // wise green
-      "125, 217, 87",   // darker wise green
-      "184, 233, 134",  // light lime
-      "78, 201, 176",   // teal-green
-      "200, 247, 166",  // pale lime
-      "104, 211, 145",  // mid green
-      "232, 245, 163",  // warm lime
+      "84, 240, 255",   // cyan
+      "45, 215, 196",   // teal
+      "141, 255, 108",  // lime
+      "87, 168, 255",   // blue
+      "184, 152, 255",  // purple
+      "255, 133, 210",  // pink
+      "255, 216, 107",  // gold
     ]
 
     function resize() {

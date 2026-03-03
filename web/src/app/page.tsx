@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TrendingUp, TrendingDown, Minus, Zap, BarChart3, Activity, MessageSquare, CreditCard } from "lucide-react"
-import { supabase, Analysis, Stock } from "@/lib/supabase"
+import { supabase, Analysis, Stock, hasSupabaseEnv } from "@/lib/supabase"
 import { ProjectIntro } from "@/components/project-intro"
 import { useSidebar } from "@/providers/sidebar-provider"
 import Link from "next/link"
@@ -56,6 +56,7 @@ export default function DashboardPage() {
   const [recentSignals, setRecentSignals] = useState<SignalWithStock[]>([])
   const [stockCount, setStockCount] = useState(0)
   const [signalsToday, setSignalsToday] = useState(0)
+  const [dataError, setDataError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [introLoaded, setIntroLoaded] = useState(false)
   const [showIntro, setShowIntro] = useState(false)
@@ -77,34 +78,54 @@ export default function DashboardPage() {
   useEffect(() => {
     async function fetchData() {
       try {
+        if (!hasSupabaseEnv) {
+          throw new Error("NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY not configured")
+        }
+        setDataError(null)
         // Fetch recent analyses with stock info
-        const { data: analyses } = await supabase
+        const { data: analyses, error: analysesError } = await supabase
           .from("analysis")
           .select("*, stocks(*)")
           .order("created_at", { ascending: false })
           .limit(5)
+
+        if (analysesError) {
+          throw analysesError
+        }
 
         if (analyses) {
           setRecentSignals(analyses as SignalWithStock[])
         }
 
         // Count stocks
-        const { count: stocks } = await supabase
+        const { count: stocks, error: stocksError } = await supabase
           .from("stocks")
           .select("*", { count: "exact", head: true })
+
+        if (stocksError) {
+          throw stocksError
+        }
+
         setStockCount(stocks || 0)
 
         // Count today's signals
         const today = new Date()
         today.setHours(0, 0, 0, 0)
-        const { count: todaySignals } = await supabase
+        const { count: todaySignals, error: todaySignalsError } = await supabase
           .from("analysis")
           .select("*", { count: "exact", head: true })
           .gte("created_at", today.toISOString())
+
+        if (todaySignalsError) {
+          throw todaySignalsError
+        }
+
         setSignalsToday(todaySignals || 0)
 
       } catch (error) {
         console.error("Error fetching data:", error)
+        const message = error instanceof Error ? error.message : "Unknown data loading error"
+        setDataError(message)
       } finally {
         setLoading(false)
       }
@@ -137,15 +158,15 @@ export default function DashboardPage() {
   }
 
   const stats = [
-    { label: "Active Stocks", value: stockCount.toString(), icon: Activity, change: "", href: "/stocks" },
-    { label: "Signals Today", value: signalsToday.toString(), icon: Zap, change: "", href: "/signals" },
-    { label: "AI Chat", value: "Ask Assistant", icon: MessageSquare, change: "", href: "/chat" },
-    { label: "Aptos Payment", value: "x402 Demo", icon: CreditCard, change: "", href: "/x402-demo" },
-    { label: "API Usage", value: "View Details", icon: BarChart3, change: "", href: "/usage" },
+    { label: "Active Stocks", value: stockCount.toString(), icon: Activity, href: "/stocks" },
+    { label: "Signals Today", value: signalsToday.toString(), icon: Zap, href: "/signals" },
+    { label: "AI Chat", value: "Ask Assistant", icon: MessageSquare, href: "/chat" },
+    { label: "Aptos Payment", value: "x402 Demo", icon: CreditCard, href: "/x402-demo" },
+    { label: "API Usage", value: "View Details", icon: BarChart3, href: "/usage" },
   ]
 
   if (!introLoaded) {
-    return <div className="p-8" />
+    return <div className="app-page" />
   }
 
   if (showIntro) {
@@ -154,14 +175,14 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="p-8">
+      <div className="app-page">
         <div className="mb-8">
           <Skeleton className="h-9 w-48 mb-2" />
           <Skeleton className="h-5 w-64" />
         </div>
         <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5 mb-8">
           {[1, 2, 3, 4, 5].map((i) => (
-            <Skeleton key={i} className="h-32" />
+            <Skeleton key={i} className="h-[132px]" />
           ))}
         </div>
         <Skeleton className="h-96" />
@@ -170,18 +191,18 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="p-8">
+    <div className="app-page">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <p className="text-muted-foreground">Overview of your stock analysis</p>
+      <div className="app-page-header">
+        <h1 className="app-page-title">Dashboard</h1>
+        <p className="app-page-subtitle">Overview of your stock analysis</p>
       </div>
 
       {/* Stats Cards */}
       <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5 mb-8">
         {stats.map((stat) => (
           <Link key={stat.label} href={stat.href}>
-            <Card className="hover:bg-muted/50 transition-colors h-full">
+            <Card className="h-[132px] hover:bg-muted/50 transition-colors">
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
                   {stat.label}
@@ -195,6 +216,28 @@ export default function DashboardPage() {
           </Link>
         ))}
       </div>
+
+      {dataError && (
+        <Card className="mb-8 border-red-500/35 bg-red-500/8">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base text-red-200">Data connection issue</CardTitle>
+            <CardDescription className="text-red-100/80">
+              Dashboard could not read from Supabase. Check Vercel env vars:
+              {" "}
+              <code>NEXT_PUBLIC_SUPABASE_URL</code>
+              {" "}
+              and
+              {" "}
+              <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code>.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-red-100/90">
+              Technical error: {dataError}
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Recent Signals */}
       <Card>

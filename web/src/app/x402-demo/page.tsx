@@ -18,7 +18,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Zap,
-  Code2,
   Database,
   CircleDot,
   Ban,
@@ -27,8 +26,10 @@ import {
   FileJson,
   Activity,
   TrendingUp,
-
   RefreshCw,
+  Sparkles,
+  Coins,
+  Link2,
 } from "lucide-react"
 
 const ENDPOINTS = [
@@ -414,6 +415,13 @@ export default function X402DemoPage() {
 
   const isConnected = usePetraWallet ? !!petraAddress : !!client
   const displayAddress = usePetraWallet ? petraAddress : walletAddress
+  const endpointMeta = ENDPOINTS.find((ep) => ep.value === selectedEndpoint) ?? ENDPOINTS[0]
+  const paymentModeLabel = usePetraWallet
+    ? "Petra signature per payment"
+    : gasless
+      ? "Gasless via facilitator"
+      : "Direct on-chain payment"
+  const flowStatusLabel = milestone === "idle" ? "Ready" : milestone === "error" ? "Error" : "In Progress"
 
   const [selectedWalletAddr, setSelectedWalletAddr] = useState<string | null>(null)
 
@@ -423,20 +431,55 @@ export default function X402DemoPage() {
   }
 
   return (
-    <div className="container mx-auto py-8 px-4 max-w-4xl">
+    <div className="app-page mx-auto max-w-6xl">
       {/* Header */}
-      <div className="mb-8 text-center">
-        <h1 className="text-4xl font-bold mb-1 bg-gradient-to-r from-teal-500 to-emerald-500 bg-clip-text text-transparent">
-          x402 Payment Demo
-        </h1>
-        <p className="text-muted-foreground text-sm">
-          Pick a test wallet, call an API, watch the payment flow happen in real time.
+      <div className="app-page-header mb-6">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="app-page-title">x402 Payment Demo</h1>
+          <Badge variant="secondary" className="text-xs">
+            <Sparkles className="h-3 w-3 mr-1" />
+            Aptos Testnet
+          </Badge>
+          <Badge variant="secondary" className="text-xs">
+            <Link2 className="h-3 w-3 mr-1" />
+            402 Challenge Flow
+          </Badge>
+        </div>
+        <p className="app-page-subtitle">
+          Pick a wallet, call a protected endpoint, and watch payment verification + data response in real time.
         </p>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="mb-6 grid gap-4 md:grid-cols-3">
+        <Card className="border-sky-300/30 bg-gradient-to-br from-sky-500/10 to-blue-500/5">
+          <CardContent className="pt-5">
+            <p className="text-xs text-muted-foreground">Selected Endpoint</p>
+            <p className="mt-1 text-sm font-semibold">{endpointMeta.label}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{endpointMeta.value}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-emerald-300/30 bg-gradient-to-br from-emerald-500/10 to-teal-500/5">
+          <CardContent className="pt-5">
+            <p className="text-xs text-muted-foreground">Request Cost</p>
+            <p className="mt-1 flex items-center gap-1 text-sm font-semibold">
+              <Coins className="h-4 w-4 text-amber-500" />
+              {endpointMeta.price}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">{endpointMeta.method} request</p>
+          </CardContent>
+        </Card>
+        <Card className="border-violet-300/30 bg-gradient-to-br from-violet-500/10 to-fuchsia-500/5">
+          <CardContent className="pt-5">
+            <p className="text-xs text-muted-foreground">Session State</p>
+            <p className="mt-1 text-sm font-semibold">{isConnected ? "Wallet Connected" : "Wallet Not Connected"}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{flowStatusLabel} • {paymentModeLabel}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-5">
         {/* Configuration Card */}
-        <Card>
+        <Card className="xl:col-span-2 border-cyan-300/25 bg-gradient-to-br from-cyan-500/8 to-indigo-500/4">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Wallet className="h-5 w-5" />
@@ -628,7 +671,7 @@ export default function X402DemoPage() {
         </Card>
 
         {/* API Call Card */}
-        <Card>
+        <Card className="xl:col-span-3 border-emerald-300/25 bg-gradient-to-br from-emerald-500/8 to-teal-500/4">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Database className="h-5 w-5" />
@@ -670,6 +713,17 @@ export default function X402DemoPage() {
               />
             </div>
 
+            <div className="rounded-xl border p-3">
+              <p className="text-xs text-muted-foreground">Current request</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">{endpointMeta.method}</Badge>
+                <span className="text-sm font-medium">{endpointMeta.label}</span>
+                <span className="text-xs text-muted-foreground">•</span>
+                <span className="text-sm text-emerald-500">{endpointMeta.price}</span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">Payment mode: {paymentModeLabel}</p>
+            </div>
+
             {/* Call Button */}
             <Button
               className="w-full"
@@ -700,7 +754,7 @@ export default function X402DemoPage() {
 
       {/* ── Live x402 Flow ── */}
       {milestone !== "idle" && (
-        <Card className="mt-6">
+        <Card className="mt-6 border-teal-300/25 bg-gradient-to-br from-teal-500/10 to-cyan-500/4">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm flex items-center gap-2">
               <Zap className="h-4 w-4 text-teal-500" />
@@ -715,7 +769,7 @@ export default function X402DemoPage() {
               {/* Logs */}
               <div>
                 <Label className="text-xs text-muted-foreground mb-1.5 block">Event Log</Label>
-                <pre className="bg-muted p-3 rounded-lg text-xs overflow-auto max-h-52 leading-relaxed">
+                <pre className="rounded-lg border bg-muted/65 p-3 text-xs leading-relaxed overflow-auto max-h-52">
                   {logs.join("\n")}
                 </pre>
               </div>
@@ -727,7 +781,7 @@ export default function X402DemoPage() {
                 </Label>
                 {result ? (
                   <div>
-                    <pre className="bg-muted p-3 rounded-lg text-xs overflow-auto max-h-52 leading-relaxed">
+                    <pre className="rounded-lg border bg-muted/65 p-3 text-xs leading-relaxed overflow-auto max-h-52">
                       {JSON.stringify(result, null, 2)}
                     </pre>
                     {txHash && (
@@ -742,7 +796,7 @@ export default function X402DemoPage() {
                     )}
                   </div>
                 ) : (
-                  <div className="bg-muted p-3 rounded-lg text-xs text-muted-foreground h-20 flex items-center justify-center">
+                  <div className="h-20 rounded-lg border bg-muted/65 p-3 text-xs text-muted-foreground flex items-center justify-center">
                     {loading ? "Payment in progress..." : "Run a call to see the response here."}
                   </div>
                 )}
@@ -753,7 +807,7 @@ export default function X402DemoPage() {
       )}
 
       {/* ── On-Chain Agent Identity ── */}
-      <Card className="mt-6 border-purple-500/20">
+      <Card className="mt-6 border-purple-500/20 bg-gradient-to-br from-purple-500/10 to-cyan-500/4">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div>

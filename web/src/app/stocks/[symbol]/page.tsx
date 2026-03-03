@@ -393,7 +393,7 @@ export default function StockDetailPage() {
 
   if (loading) {
     return (
-      <div className="p-8">
+      <div className="app-page">
         <Skeleton className="h-8 w-32 mb-6" />
         <Skeleton className="h-[400px] mb-6" />
         <div className="grid gap-4 md:grid-cols-2">
@@ -406,7 +406,7 @@ export default function StockDetailPage() {
 
   if (!stock) {
     return (
-      <div className="p-8">
+      <div className="app-page">
         <Button variant="ghost" onClick={() => router.back()} className="mb-6">
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back
@@ -424,7 +424,7 @@ export default function StockDetailPage() {
   const latestAnalysis = stock.analyses[0] as AnalysisWithAlgo | undefined
 
   return (
-    <div className="p-8">
+    <div className="app-page">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
@@ -433,14 +433,14 @@ export default function StockDetailPage() {
           </Button>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-bold">{stock.symbol}</h1>
+              <h1 className="app-page-title">{stock.symbol}</h1>
               {latestAnalysis && (
                 <Badge variant="outline" className={getSignalColor(latestAnalysis.signal)}>
                   {latestAnalysis.signal.toUpperCase()}
                 </Badge>
               )}
             </div>
-            <p className="text-muted-foreground">{stock.name}</p>
+            <p className="app-page-subtitle">{stock.name}</p>
           </div>
         </div>
         <div className="flex flex-col items-end gap-1.5">
