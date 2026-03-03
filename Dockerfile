@@ -22,8 +22,8 @@ RUN python -m pip install --upgrade pip setuptools wheel \
 # Copy application code
 COPY src/ src/
 COPY main.py .
-COPY data/ data/
 COPY models/ models/
+RUN mkdir -p data
 
 # Expose metrics port
 EXPOSE 9090

@@ -22,8 +22,8 @@ COPY src/ src/
 COPY main.py .
 COPY scripts/ scripts/
 COPY migrations/ migrations/
-COPY data/ data/
 COPY models/ models/
+RUN mkdir -p data
 
 EXPOSE 8000
 

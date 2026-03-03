@@ -1,0 +1,36 @@
+# Default: exclude everything, then allow only what Dockerfiles need.
+*
+
+# Required build inputs
+!requirements.txt
+!main.py
+!backend/
+!backend/**
+!src/
+!src/**
+!scripts/
+!scripts/**
+!migrations/
+!migrations/**
+!models/
+!models/**
+!Dockerfile
+!Dockerfile.backend
+
+# Always exclude secrets and local env files
+.env
+.env.*
+web/.env*
+demo-client/.env*
+
+# Exclude VCS/IDE/cache artifacts
+.git
+.github
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+node_modules
