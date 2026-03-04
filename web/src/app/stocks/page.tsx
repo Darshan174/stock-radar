@@ -25,6 +25,35 @@ interface StockWithPrice extends Stock {
   sparkline_data?: { time: string; value: number }[]
 }
 
+interface IntradayApiResponse {
+  candles?: Array<{
+    open: number
+    close: number
+  }>
+  meta?: {
+    regularMarketPrice?: number
+    previousClose?: number
+    chartPreviousClose?: number
+  }
+}
+
+type AnalyzeFeedbackState = "queued" | "running" | "succeeded" | "failed"
+
+interface AnalyzeFeedback {
+  state: AnalyzeFeedbackState
+  message: string
+}
+
+function hasNumber(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value)
+}
+
+function getAnalyzeFeedbackClass(state: AnalyzeFeedbackState) {
+  if (state === "succeeded") return "text-emerald-500"
+  if (state === "failed") return "text-red-500"
+  return "text-amber-500"
+}
+
 export default function StocksPage() {
   const router = useRouter()
   const [stocks, setStocks] = useState<StockWithPrice[]>([])
@@ -35,6 +64,40 @@ export default function StocksPage() {
   const [analyzing, setAnalyzing] = useState<string | null>(null)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+  const [analyzeFeedback, setAnalyzeFeedback] = useState<Record<string, AnalyzeFeedback>>({})
+
+  async function fetchQuoteSnapshot(symbol: string): Promise<Pick<StockWithPrice, "latest_price" | "price_change"> | null> {
+    const response = await fetch(`/api/intraday?symbol=${encodeURIComponent(symbol)}&interval=5m&range=1d`, {
+      cache: "no-store",
+    })
+
+    if (!response.ok) return null
+
+    const data = (await response.json()) as IntradayApiResponse
+    const candles = Array.isArray(data.candles) ? data.candles : []
+    const lastClose = candles.length > 0 ? candles[candles.length - 1].close : undefined
+    const metaPrice = data.meta?.regularMarketPrice
+    const latestPrice = hasNumber(lastClose) ? lastClose : hasNumber(metaPrice) ? metaPrice : undefined
+
+    if (!hasNumber(latestPrice)) return null
+
+    const previousClose = data.meta?.previousClose ?? data.meta?.chartPreviousClose
+    let priceChange: number | undefined
+
+    if (hasNumber(previousClose) && previousClose > 0) {
+      priceChange = ((latestPrice - previousClose) / previousClose) * 100
+    } else if (candles.length > 0) {
+      const sessionOpen = candles[0].open
+      if (hasNumber(sessionOpen) && sessionOpen > 0) {
+        priceChange = ((latestPrice - sessionOpen) / sessionOpen) * 100
+      }
+    }
+
+    return {
+      latest_price: latestPrice,
+      price_change: hasNumber(priceChange) ? priceChange : undefined,
+    }
+  }
 
   async function waitForAnalyzeJob(jobId: string, timeoutMs = 180000) {
     const startedAt = Date.now()
@@ -86,8 +149,8 @@ export default function StocksPage() {
               .order("timestamp", { ascending: false })
               .limit(30)
 
-            let latest_price = 0
-            let price_change = 0
+            let latest_price: number | undefined
+            let price_change: number | undefined
             let sparkline_data: { time: string; value: number }[] = []
 
             if (priceData && priceData.length > 0) {
@@ -114,21 +177,16 @@ export default function StocksPage() {
         const updatedStocks = await Promise.all(
           stocksWithHistoricalPrices.map(async (stock) => {
             try {
-              const liveResponse = await fetch(`/api/live-price?symbol=${encodeURIComponent(stock.symbol)}`, {
-                cache: "no-store"
-              })
-              if (liveResponse.ok) {
-                const liveData = await liveResponse.json()
-                if (liveData.price) {
-                  return {
-                    ...stock,
-                    latest_price: liveData.price,
-                    price_change: liveData.changePercent || stock.price_change,
-                  }
+              const quote = await fetchQuoteSnapshot(stock.symbol)
+              if (quote) {
+                return {
+                  ...stock,
+                  latest_price: quote.latest_price,
+                  price_change: quote.price_change ?? stock.price_change,
                 }
               }
             } catch (e) {
-              console.warn(`Failed to fetch live price for ${stock.symbol}:`, e)
+              console.warn(`Failed to fetch quote snapshot for ${stock.symbol}:`, e)
             }
             return stock
           })
@@ -152,17 +210,12 @@ export default function StocksPage() {
       const updatedStocks = await Promise.all(
         stocks.map(async (stock) => {
           try {
-            const liveResponse = await fetch(`/api/live-price?symbol=${encodeURIComponent(stock.symbol)}`, {
-              cache: "no-store"
-            })
-            if (liveResponse.ok) {
-              const liveData = await liveResponse.json()
-              if (liveData.price) {
-                return {
-                  ...stock,
-                  latest_price: liveData.price,
-                  price_change: liveData.changePercent || stock.price_change,
-                }
+            const quote = await fetchQuoteSnapshot(stock.symbol)
+            if (quote) {
+              return {
+                ...stock,
+                latest_price: quote.latest_price,
+                price_change: quote.price_change ?? stock.price_change,
               }
             }
           } catch {
@@ -247,6 +300,10 @@ export default function StocksPage() {
     e.stopPropagation()
     setAnalyzing(symbol)
     setError("")
+    setAnalyzeFeedback((prev) => ({
+      ...prev,
+      [symbol]: { state: "queued", message: "Analysis queued..." },
+    }))
 
     try {
       const response = await fetch("/api/analyze", {
@@ -257,19 +314,50 @@ export default function StocksPage() {
 
       const data = await response.json()
       if (!response.ok) {
+        setAnalyzeFeedback((prev) => ({
+          ...prev,
+          [symbol]: { state: "failed", message: data.error || "Failed to start analysis" },
+        }))
         setError(data.error || "Failed to start analysis")
         return
       }
 
       if (!data.jobId) {
+        setAnalyzeFeedback((prev) => ({
+          ...prev,
+          [symbol]: { state: "failed", message: "Analysis job was not created" },
+        }))
         setError("Analysis job was not created")
         return
       }
 
+      setAnalyzeFeedback((prev) => ({
+        ...prev,
+        [symbol]: { state: "running", message: "Analysis running..." },
+      }))
       await waitForAnalyzeJob(data.jobId)
+      setAnalyzeFeedback((prev) => ({
+        ...prev,
+        [symbol]: { state: "succeeded", message: "Analysis complete" },
+      }))
       fetchStocks()
+      setTimeout(() => {
+        setAnalyzeFeedback((prev) => {
+          if (!prev[symbol]) return prev
+          const next = { ...prev }
+          delete next[symbol]
+          return next
+        })
+      }, 5000)
     } catch (err) {
       console.error("Failed to analyze:", err)
+      setAnalyzeFeedback((prev) => ({
+        ...prev,
+        [symbol]: {
+          state: "failed",
+          message: err instanceof Error ? err.message : "Analysis failed",
+        },
+      }))
       setError(err instanceof Error ? err.message : "Failed to analyze")
     } finally {
       setAnalyzing(null)
@@ -514,80 +602,97 @@ export default function StocksPage() {
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {stocks.map((stock) => (
-            <Card
-              key={stock.symbol}
-              className="cursor-pointer hover:scale-[1.02] transition-all relative overflow-hidden group"
-              onClick={() => router.push(`/stocks/${stock.symbol}`)}
-            >
-              {/* Full-card sparkline background */}
-              {stock.sparkline_data && stock.sparkline_data.length > 1 && (
-                <div className="absolute inset-0 opacity-40 group-hover:opacity-60 transition-opacity">
-                  <Sparkline
-                    data={stock.sparkline_data}
-                    width={320}
-                    height={180}
-                    color={stock.price_change && stock.price_change >= 0 ? "#00E676" : "#FF1744"}
-                  />
-                </div>
-              )}
+          {stocks.map((stock) => {
+            const hasPriceChange = hasNumber(stock.price_change)
+            const isPositive = hasPriceChange ? stock.price_change >= 0 : true
+            const hasLatestPrice = hasNumber(stock.latest_price)
+            const feedback = analyzeFeedback[stock.symbol]
 
-              {/* Gradient overlay for text readability */}
-              <div className="absolute inset-0 bg-gradient-to-t from-background via-background/60 to-transparent" />
-
-              <CardHeader className="pb-2 relative z-10">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2">
-                    {stock.price_change && stock.price_change >= 0 ? (
-                      <TrendingUp className="h-5 w-5 text-[#00E676]" />
-                    ) : (
-                      <TrendingDown className="h-5 w-5 text-[#FF1744]" />
-                    )}
-                    {stock.symbol}
-                  </CardTitle>
-                  {stock.price_change !== undefined && stock.price_change !== 0 && (
-                    <span className={`text-lg font-bold ${stock.price_change >= 0 ? "text-[#00E676]" : "text-[#FF1744]"}`}>
-                      {stock.price_change >= 0 ? "+" : ""}{stock.price_change.toFixed(2)}%
-                    </span>
-                  )}
-                </div>
-                <CardDescription className="text-foreground/70">{stock.name}</CardDescription>
-              </CardHeader>
-              <CardContent className="relative z-10">
-                <div className="flex items-end justify-between gap-4">
-                  <div>
-                    <div className="text-3xl font-bold">
-                      {stock.latest_price ? (
-                        <>
-                          {stock.currency === "INR" ? "₹" : "$"}
-                          {stock.latest_price.toFixed(2)}
-                        </>
-                      ) : (
-                        <span className="text-muted-foreground text-lg">No data</span>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted-foreground">{stock.sector || stock.exchange}</p>
+            return (
+              <Card
+                key={stock.symbol}
+                className="cursor-pointer hover:scale-[1.02] transition-all relative overflow-hidden group"
+                onClick={() => router.push(`/stocks/${stock.symbol}`)}
+              >
+                {/* Full-card sparkline background */}
+                {stock.sparkline_data && stock.sparkline_data.length > 1 && (
+                  <div className="absolute inset-0 opacity-40 group-hover:opacity-60 transition-opacity">
+                    <Sparkline
+                      data={stock.sparkline_data}
+                      width={320}
+                      height={180}
+                      color={isPositive ? "#00E676" : "#FF1744"}
+                    />
                   </div>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={(e) => handleAnalyze(e, stock.symbol)}
-                    disabled={analyzing === stock.symbol}
-                    className="shrink-0"
-                  >
-                    {analyzing === stock.symbol ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <>
-                        <Play className="h-3 w-3 mr-1" />
-                        Analyze
-                      </>
+                )}
+
+                {/* Gradient overlay for text readability */}
+                <div className="absolute inset-0 bg-gradient-to-t from-background via-background/60 to-transparent" />
+
+                <CardHeader className="pb-2 relative z-10">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2">
+                      {isPositive ? (
+                        <TrendingUp className="h-5 w-5 text-[#00E676]" />
+                      ) : (
+                        <TrendingDown className="h-5 w-5 text-[#FF1744]" />
+                      )}
+                      {stock.symbol}
+                    </CardTitle>
+                    {hasPriceChange && stock.price_change !== 0 && (
+                      <span className={`text-lg font-bold ${isPositive ? "text-[#00E676]" : "text-[#FF1744]"}`}>
+                        {isPositive ? "+" : ""}{stock.price_change.toFixed(2)}%
+                      </span>
                     )}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                  </div>
+                  <CardDescription className="text-foreground/70">{stock.name}</CardDescription>
+                </CardHeader>
+                <CardContent className="relative z-10">
+                  <div className="flex items-end justify-between gap-4">
+                    <div>
+                      <div className="text-3xl font-bold min-h-[2.2rem] flex items-center">
+                        {hasLatestPrice ? (
+                          <>
+                            {stock.currency === "INR" ? "₹" : "$"}
+                            {stock.latest_price.toFixed(2)}
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground text-base">Fetching price...</span>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground">{stock.sector || stock.exchange}</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={(e) => handleAnalyze(e, stock.symbol)}
+                      disabled={analyzing === stock.symbol}
+                      className="shrink-0"
+                    >
+                      {analyzing === stock.symbol ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <>
+                          <Play className="h-3 w-3 mr-1" />
+                          Analyze
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  {feedback && (
+                    <div className={`mt-2 inline-flex items-center gap-1 text-xs font-medium ${getAnalyzeFeedbackClass(feedback.state)}`}>
+                      {feedback.state === "succeeded" && <CheckCircle className="h-3.5 w-3.5" />}
+                      {feedback.state === "failed" && <XCircle className="h-3.5 w-3.5" />}
+                      {(feedback.state === "queued" || feedback.state === "running") && (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      )}
+                      <span>{feedback.message}</span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          })}
         </div>
       )}
     </div>
