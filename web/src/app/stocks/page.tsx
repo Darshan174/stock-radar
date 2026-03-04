@@ -154,8 +154,12 @@ export default function StocksPage() {
             let sparkline_data: { time: string; value: number }[] = []
 
             if (priceData && priceData.length > 0) {
-              latest_price = priceData[0].close
-              if (priceData.length > 1) {
+              const latestClose = priceData[0].close
+              if (typeof latestClose === "number" && Number.isFinite(latestClose)) {
+                latest_price = latestClose
+              }
+
+              if (priceData.length > 1 && hasNumber(latest_price)) {
                 const prev = priceData[1].close
                 price_change = prev > 0 ? ((latest_price - prev) / prev) * 100 : 0
               }
@@ -603,9 +607,11 @@ export default function StocksPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {stocks.map((stock) => {
-            const hasPriceChange = hasNumber(stock.price_change)
-            const isPositive = hasPriceChange ? stock.price_change >= 0 : true
-            const hasLatestPrice = hasNumber(stock.latest_price)
+            const priceChange = hasNumber(stock.price_change) ? stock.price_change : null
+            const latestPrice = hasNumber(stock.latest_price) ? stock.latest_price : null
+            const hasPriceChange = priceChange !== null
+            const hasLatestPrice = latestPrice !== null
+            const isPositive = hasPriceChange ? priceChange >= 0 : true
             const feedback = analyzeFeedback[stock.symbol]
 
             return (
@@ -639,9 +645,9 @@ export default function StocksPage() {
                       )}
                       {stock.symbol}
                     </CardTitle>
-                    {hasPriceChange && stock.price_change !== 0 && (
+                    {hasPriceChange && priceChange !== 0 && (
                       <span className={`text-lg font-bold ${isPositive ? "text-[#00E676]" : "text-[#FF1744]"}`}>
-                        {isPositive ? "+" : ""}{stock.price_change.toFixed(2)}%
+                        {isPositive ? "+" : ""}{priceChange.toFixed(2)}%
                       </span>
                     )}
                   </div>
@@ -654,7 +660,7 @@ export default function StocksPage() {
                         {hasLatestPrice ? (
                           <>
                             {stock.currency === "INR" ? "₹" : "$"}
-                            {stock.latest_price.toFixed(2)}
+                            {latestPrice.toFixed(2)}
                           </>
                         ) : (
                           <span className="text-muted-foreground text-base">Fetching price...</span>
