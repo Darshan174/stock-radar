@@ -18,7 +18,7 @@ export function LivePriceTicker({
     className,
     livePriceOverride = null,
 }: LivePriceTickerProps) {
-    const { livePrice: hookLivePrice } = useLiveStockData({
+    const { livePrice: hookLivePrice, error: hookError } = useLiveStockData({
         symbol,
         enabled: !livePriceOverride,
         updateThrottleMs: 350,
@@ -35,7 +35,9 @@ export function LivePriceTicker({
     if (!livePrice) {
         return (
             <div className={cn("flex items-center gap-2 text-muted-foreground", className)}>
-                <div className="animate-pulse h-6 w-24 bg-muted rounded" />
+                <div className="h-6 min-w-24 rounded bg-muted/70 px-2 text-xs flex items-center justify-center">
+                    {hookError ? "Price unavailable" : "Loading price..."}
+                </div>
             </div>
         )
     }

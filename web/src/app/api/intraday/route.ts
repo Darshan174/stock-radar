@@ -104,6 +104,8 @@ export async function GET(request: NextRequest) {
                 currency: result.meta?.currency || "USD",
                 exchangeTimezoneName: result.meta?.exchangeTimezoneName,
                 regularMarketPrice: result.meta?.regularMarketPrice,
+                previousClose: result.meta?.previousClose,
+                chartPreviousClose: result.meta?.chartPreviousClose,
             },
             lastUpdate: new Date().toISOString(),
         })

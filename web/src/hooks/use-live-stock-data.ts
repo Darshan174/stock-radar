@@ -32,6 +32,21 @@ interface FinnhubTradeMessage {
     data?: FinnhubTrade[]
 }
 
+interface IntradayFallbackResponse {
+    symbol?: string
+    candles?: Array<{
+        time: number
+        open: number
+        close: number
+        volume?: number
+    }>
+    meta?: {
+        regularMarketPrice?: number
+        previousClose?: number
+        chartPreviousClose?: number
+    }
+}
+
 export function useLiveStockData({
     symbol,
     enabled = true,
@@ -174,6 +189,80 @@ export function useLiveStockData({
         [flushPendingTrade, publishTrade, updateThrottleMs]
     )
 
+    const parseLivePricePayload = useCallback((payload: {
+        symbol?: string
+        price?: number
+        change?: number
+        changePercent?: number
+        volume?: number
+        timestamp?: string
+        previousClose?: number
+    }): LivePrice | null => {
+        if (typeof payload.price !== "number" || !Number.isFinite(payload.price)) {
+            return null
+        }
+
+        const previousClose =
+            typeof payload.previousClose === "number" && payload.previousClose > 0
+                ? payload.previousClose
+                : previousCloseRef.current ?? payload.price - (payload.change || 0)
+
+        if (typeof previousClose === "number" && previousClose > 0) {
+            previousCloseRef.current = previousClose
+        }
+
+        return {
+            symbol: payload.symbol || symbol,
+            price: payload.price,
+            change: payload.change || 0,
+            changePercent: payload.changePercent || 0,
+            volume: payload.volume || 0,
+            timestamp: payload.timestamp ? new Date(payload.timestamp) : new Date(),
+            previousClose,
+        }
+    }, [symbol])
+
+    const parseIntradayFallback = useCallback((data: IntradayFallbackResponse): LivePrice | null => {
+        const candles = Array.isArray(data.candles) ? data.candles : []
+        const lastCandle = candles.length > 0 ? candles[candles.length - 1] : undefined
+        const lastPrice =
+            typeof lastCandle?.close === "number" && Number.isFinite(lastCandle.close)
+                ? lastCandle.close
+                : typeof data.meta?.regularMarketPrice === "number" && Number.isFinite(data.meta.regularMarketPrice)
+                    ? data.meta.regularMarketPrice
+                    : null
+
+        if (lastPrice === null) return null
+
+        const previousCloseRaw =
+            data.meta?.previousClose ??
+            data.meta?.chartPreviousClose ??
+            (typeof candles[0]?.open === "number" ? candles[0].open : undefined)
+
+        const previousClose =
+            typeof previousCloseRaw === "number" && Number.isFinite(previousCloseRaw) && previousCloseRaw > 0
+                ? previousCloseRaw
+                : previousCloseRef.current ?? lastPrice
+
+        if (previousClose > 0) {
+            previousCloseRef.current = previousClose
+        }
+
+        const change = lastPrice - previousClose
+        const changePercent = previousClose > 0 ? (change / previousClose) * 100 : 0
+        const timestamp = lastCandle?.time ? new Date(lastCandle.time * 1000) : new Date()
+
+        return {
+            symbol: data.symbol || symbol,
+            price: lastPrice,
+            change,
+            changePercent,
+            volume: typeof lastCandle?.volume === "number" ? lastCandle.volume : 0,
+            timestamp,
+            previousClose,
+        }
+    }, [symbol])
+
     const fetchLivePrice = useCallback(async () => {
         if (!symbol) return
 
@@ -182,32 +271,38 @@ export function useLiveStockData({
                 cache: "no-store",
             })
 
-            if (!response.ok) {
+            if (response.ok) {
+                const parsed = parseLivePricePayload(await response.json())
+                if (parsed) {
+                    setLivePrice(parsed)
+                    markConnected()
+                    setError(null)
+                    return
+                }
+            }
+
+            // Fallback to free intraday snapshot when paid live-price endpoint is unavailable.
+            const fallbackResponse = await fetch(
+                `/api/intraday?symbol=${encodeURIComponent(symbol)}&interval=5m&range=1d`,
+                { cache: "no-store" }
+            )
+
+            if (!fallbackResponse.ok) {
                 throw new Error("Failed to fetch live price")
             }
 
-            const data = await response.json()
+            const fallbackParsed = parseIntradayFallback(
+                (await fallbackResponse.json()) as IntradayFallbackResponse
+            )
 
-            if (data.price) {
-                const previousClose =
-                    typeof data.previousClose === "number" ? data.previousClose : undefined
-                if (typeof previousClose === "number" && previousClose > 0) {
-                    previousCloseRef.current = previousClose
-                }
-
-                setLivePrice({
-                    symbol: data.symbol || symbol,
-                    price: data.price,
-                    change: data.change || 0,
-                    changePercent: data.changePercent || 0,
-                    volume: data.volume || 0,
-                    timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
-                    previousClose,
-                })
-
+            if (fallbackParsed) {
+                setLivePrice(fallbackParsed)
                 markConnected()
                 setError(null)
+                return
             }
+
+            throw new Error("No price data available")
         } catch (err) {
             const wsOpen = wsRef.current?.readyState === WebSocket.OPEN
             if (!wsOpen) {
@@ -218,7 +313,43 @@ export function useLiveStockData({
                 }
             }
         }
-    }, [symbol, markConnected])
+    }, [symbol, markConnected, parseLivePricePayload, parseIntradayFallback])
+
+    const setSnapshotIfNeeded = useCallback((data: {
+        symbol?: string
+        price?: number
+        change?: number
+        changePercent?: number
+        volume?: number
+        timestamp?: string
+        previousClose?: number
+    }) => {
+        const parsed = parseLivePricePayload(data)
+        if (!parsed) return
+        setLivePrice((prev) => ({
+            symbol: parsed.symbol,
+            price: parsed.price,
+            change: parsed.change,
+            changePercent: parsed.changePercent,
+            volume: parsed.volume,
+            timestamp: parsed.timestamp,
+            previousClose: parsed.previousClose,
+            ...(prev ? {} : {}),
+        }))
+    }, [parseLivePricePayload])
+
+    const fetchSnapshotOnly = useCallback(async () => {
+        if (!symbol) return
+        try {
+            const response = await fetch(`/api/live-price?symbol=${encodeURIComponent(symbol)}`, {
+                cache: "no-store",
+            })
+            if (!response.ok) return
+            setSnapshotIfNeeded(await response.json())
+        } catch {
+            // ignore snapshot errors
+        }
+    }, [symbol, setSnapshotIfNeeded])
 
     const startPolling = useCallback(() => {
         if (!enabled || !symbol) return
@@ -265,7 +396,7 @@ export function useLiveStockData({
 
                 // Keep a periodic snapshot for volume/prev-close consistency.
                 if (!pollRef.current) {
-                    pollRef.current = setInterval(fetchLivePrice, 60000)
+                    pollRef.current = setInterval(fetchSnapshotOnly, 60000)
                 }
             }
 
@@ -305,7 +436,7 @@ export function useLiveStockData({
         symbol,
         preferWebSocket,
         startPolling,
-        fetchLivePrice,
+        fetchSnapshotOnly,
         queueTrade,
         toFinnhubSymbol,
         markConnected,
