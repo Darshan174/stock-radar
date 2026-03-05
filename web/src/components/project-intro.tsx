@@ -44,59 +44,6 @@ const monoFont = IBM_Plex_Mono({
   variable: "--font-mono-intro",
 })
 
-// ─── Typewriter Effect ────────────────────────────────────────
-const TYPEWRITER_PHRASES = [
-  "Financial Analyst",
-  "Autonomous Agent",
-  "Micropayment Protocol",
-  "On-Chain Identity",
-  "AI-Powered Analysis",
-]
-
-function useTypewriter(phrases: string[], typingSpeed = 80, deletingSpeed = 40, pauseTime = 2000) {
-  const [text, setText] = useState("")
-  const [phraseIndex, setPhraseIndex] = useState(0)
-  const [phase, setPhase] = useState<"typing" | "holding" | "deleting">("typing")
-
-  useEffect(() => {
-    const currentPhrase = phrases[phraseIndex]
-    let timeoutMs = typingSpeed
-
-    if (phase === "holding") {
-      // Keep shorter phrases visible slightly longer so cycle speed feels consistent.
-      timeoutMs = pauseTime + Math.max(0, 18 - currentPhrase.length) * 90
-    } else if (phase === "deleting") {
-      timeoutMs = deletingSpeed
-    }
-
-    const timeout = setTimeout(() => {
-      if (phase === "typing") {
-        const next = currentPhrase.slice(0, text.length + 1)
-        setText(next)
-        if (next.length === currentPhrase.length) {
-          setPhase("holding")
-        }
-        return
-      }
-
-      if (phase === "holding") {
-        setPhase("deleting")
-        return
-      }
-
-      const next = currentPhrase.slice(0, Math.max(0, text.length - 1))
-      setText(next)
-      if (next.length === 0) {
-        setPhase("typing")
-        setPhraseIndex((prev) => (prev + 1) % phrases.length)
-      }
-    }, timeoutMs)
-
-    return () => clearTimeout(timeout)
-  }, [text, phraseIndex, phase, phrases, typingSpeed, deletingSpeed, pauseTime])
-
-  return text
-}
 
 // ─── Particle System ──────────────────────────────────────────
 interface Particle {
@@ -121,13 +68,11 @@ function useParticles(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
     let animationId: number
     const particles: Particle[] = []
     const COLORS = [
-      "84, 240, 255",   // cyan
-      "45, 215, 196",   // teal
-      "141, 255, 108",  // lime
-      "87, 168, 255",   // blue
-      "184, 152, 255",  // purple
-      "255, 133, 210",  // pink
-      "255, 216, 107",  // gold
+      "34, 197, 94",    // green-500
+      "16, 185, 129",   // emerald-500
+      "74, 222, 128",   // green-400
+      "148, 163, 184",  // slate-400
+      "100, 116, 139",  // slate-500
     ]
 
     function resize() {
@@ -419,7 +364,6 @@ interface ProjectIntroProps {
 
 export function ProjectIntro({ onEnter }: ProjectIntroProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const typedText = useTypewriter(TYPEWRITER_PHRASES)
   useParticles(canvasRef)
 
   // Scroll-reveal refs
@@ -444,43 +388,43 @@ export function ProjectIntro({ onEnter }: ProjectIntroProps) {
       <div className={styles.bgMesh} aria-hidden="true" />
 
       {/* ── Navigation ── */}
-      <nav className={styles.nav}>
+      <nav className="w-full mx-auto flex items-center justify-between pb-4 pt-6 px-8 bg-black text-white relative z-50">
         <div className={styles.navLogo}>
           <div className={styles.navLogoIcon}>
             <Radar size={16} />
           </div>
           Stock Radar
         </div>
-        <div className={styles.navLinks}>
-          <button className={styles.navLink} onClick={() => scrollTo("features")}>Features</button>
-          <button className={styles.navLink} onClick={() => scrollTo("aiml")}>AI / ML</button>
-          <button className={styles.navLink} onClick={() => scrollTo("pricing")}>Pricing</button>
-          <button className={styles.navLink} onClick={() => scrollTo("tech")}>Tech Stack</button>
+
+        <div className="flex bg-[#0A1118] border border-[#1a2530] text-white rounded-full items-center mr-8">
+          <button
+            className="bg-gradient-to-r from-[#70ffb2] to-[#4ade80] text-black px-6 py-2 rounded-full font-bold transition-transform hover:opacity-90"
+            onClick={onEnter}
+          >
+            Enter Dashboard
+          </button>
+          <div className="flex gap-6 pl-4 pr-6 text-sm font-medium">
+            <button className="hover:text-[#4ade80] transition-colors" onClick={() => scrollTo("features")}>Features</button>
+            <button className="hover:text-[#4ade80] transition-colors" onClick={() => scrollTo("aiml")}>AI / ML</button>
+            <button className="hover:text-[#4ade80] transition-colors" onClick={() => scrollTo("pricing")}>Pricing</button>
+            <button className="hover:text-[#4ade80] transition-colors" onClick={() => scrollTo("tech")}>Tech Stack</button>
+          </div>
         </div>
-        <button className={styles.navCta} onClick={onEnter}>
-          Enter Dashboard
-        </button>
       </nav>
 
       {/* ── Hero ── */}
-      <section className={styles.hero}>
+      <section className={`${styles.hero} bg-black text-white`}>
         <div className={styles.heroGlow} aria-hidden="true" />
         <div className={styles.heroBadge}>
           <span className={styles.heroBadgeDot} />
           Autonomous Agent on Aptos
         </div>
 
-        <h1 className={styles.heroTitle}>
-          <span className={styles.heroTitleLine}>Experience liftoff with</span>
-          <span className={styles.heroTitleLine}>
-            <span className={styles.typewriterWrap}>
-              <span className={styles.heroTitleGradient}>{typedText}</span>
-              <span className={styles.typewriterCursor} />
-            </span>
-          </span>
+        <h1 className="text-[clamp(4rem,10vw,8rem)] font-black uppercase leading-[0.85] tracking-tight text-[#22c55e] mb-8 max-w-5xl mx-auto">
+          TRADE AND TRACK MONEY WORLDWIDE
         </h1>
 
-        <p className={styles.heroSubtitle}>
+        <p className="max-w-3xl mx-auto text-[clamp(1rem,2vw,1.22rem)] leading-[1.65] text-white/90 mb-10 opacity-0 animate-[fadeSlideUp_0.8s_0.3s_ease_forwards]">
           Pay-per-use AI stock analysis powered by x402 micropayments, on-chain identity, and
           agent-to-agent coordination. No accounts. No subscriptions. Just micropayments.
         </p>
@@ -497,16 +441,16 @@ export function ProjectIntro({ onEnter }: ProjectIntroProps) {
         </div>
 
         <div className={styles.heroSignals}>
-          <div className={styles.heroSignalPill}>Real-time market feed</div>
-          <div className={styles.heroSignalPill}>x402 micropayments</div>
-          <div className={styles.heroSignalPill}>On-chain reputation</div>
+          <div className={`${styles.heroSignalPill} !bg-[#22c55e] !text-black !border-[#22c55e]`}>Real-time market feed</div>
+          <div className={`${styles.heroSignalPill} !bg-[#22c55e] !text-black !border-[#22c55e]`}>x402 micropayments</div>
+          <div className={`${styles.heroSignalPill} !bg-[#22c55e] !text-black !border-[#22c55e]`}>On-chain reputation</div>
         </div>
       </section>
 
 
 
       {/* ── IDE Showcase ── */}
-      <section className={styles.showcaseSection} ref={showcase.ref}>
+      <section className={`${styles.showcaseSection} bg-[#22c55e]`} ref={showcase.ref}>
         <div className={`${styles.showcaseWindow} ${showcase.className}`}>
           <div className={styles.showcaseWindowBar}>
             <div className={`${styles.windowDot} ${styles.windowDotRed}`} />
@@ -623,14 +567,14 @@ export function ProjectIntro({ onEnter }: ProjectIntroProps) {
       </section>
 
       {/* ── Features ── */}
-      <section id="features" className={styles.featuresSection} ref={features.ref}>
+      <section id="features" className={`${styles.featuresSection} bg-white text-black`} ref={features.ref}>
         <div className={`${styles.sectionHeader} ${features.className}`}>
-          <div className={styles.sectionKicker}>
+          <div className={`${styles.sectionKicker} text-[#22c55e] bg-[#22c55e]/10 border-[#22c55e]/20`}>
             <Zap size={13} />
             Core Capabilities
           </div>
-          <h2 className={styles.sectionTitle}>Built for the agent-first era</h2>
-          <p className={styles.sectionSubtitle}>
+          <h2 className="text-[clamp(2rem,4.5vw,3.2rem)] font-bold tracking-[-0.03em] leading-tight mb-4 text-black">Built for the agent-first era</h2>
+          <p className="max-w-3xl mx-auto text-[1.05rem] leading-[1.6] text-black/70">
             Stock Radar is a verified autonomous agent registered on the Aptos blockchain, selling
             financial intelligence through x402 micropayments.
           </p>
@@ -638,29 +582,28 @@ export function ProjectIntro({ onEnter }: ProjectIntroProps) {
 
         <div className={`${styles.featuresGrid} ${features.className}`}>
           {FEATURES.map((f) => (
-            <div key={f.title} className={styles.featureCard}>
+            <div key={f.title} className={`${styles.featureCard} !bg-gray-50 !border-gray-200`}>
               <div className={`${styles.featureIcon} ${styles[`featureIcon${f.color}` as keyof typeof styles]}`}>
                 <f.icon size={22} />
               </div>
-              <div className={styles.featureTitle}>{f.title}</div>
-              <div className={styles.featureDesc}>{f.desc}</div>
+              <div className="text-[1.1rem] font-bold mb-2 text-black">{f.title}</div>
+              <div className="text-[0.9rem] leading-[1.6] text-black/70">{f.desc}</div>
             </div>
           ))}
         </div>
       </section>
 
       {/* ── AI/ML Deep Dive ── */}
-      <section id="aiml" className={styles.featuresSection} ref={aiml.ref}>
+      <section id="aiml" className={`${styles.featuresSection} bg-black text-white`} ref={aiml.ref}>
         <div className={`${styles.sectionHeader} ${aiml.className}`}>
-          <div className={styles.sectionKicker}>
+          <div className={`${styles.sectionKicker} text-[#22c55e] bg-[#22c55e]/10 border-[#22c55e]/20`}>
             <Brain size={13} />
             AI / ML Engineering
           </div>
-          <h2 className={styles.sectionTitle}>
-            Serious ML, not just a{" "}
-            <span className={styles.heroTitleGradient}>wrapper</span>
+          <h2 className="text-[clamp(2rem,4.5vw,3.2rem)] font-bold tracking-[-0.03em] leading-tight mb-4 text-[#22c55e]">
+            Serious ML, not just a wrapper
           </h2>
-          <p className={styles.sectionSubtitle}>
+          <p className="max-w-3xl mx-auto text-[1.05rem] leading-[1.6] text-white/70">
             A production-grade ML pipeline — from multi-model LLM orchestration and feature
             engineering through regime-aware prediction, backtesting, and real-time guardrails.
           </p>
@@ -668,14 +611,14 @@ export function ProjectIntro({ onEnter }: ProjectIntroProps) {
 
         <div className={`${styles.aimlGrid} ${aiml.className}`}>
           {AI_ML_FEATURES.map((f) => (
-            <div key={f.title} className={styles.aimlCard}>
+            <div key={f.title} className={`${styles.aimlCard} !bg-black !border-[#22c55e]/30 !shadow-[#22c55e]/10`}>
               <div className={styles.aimlCardTop}>
                 <div className={`${styles.featureIcon} ${styles[`featureIcon${f.color}` as keyof typeof styles]}`}>
                   <f.icon size={22} />
                 </div>
                 <div>
-                  <div className={styles.featureTitle}>{f.title}</div>
-                  <div className={styles.featureDesc}>{f.desc}</div>
+                  <div className="text-[1.1rem] font-bold mb-2 text-white">{f.title}</div>
+                  <div className="text-[0.9rem] leading-[1.6] text-white/70">{f.desc}</div>
                 </div>
               </div>
               <ul className={styles.aimlDetails}>
@@ -692,25 +635,25 @@ export function ProjectIntro({ onEnter }: ProjectIntroProps) {
       </section>
 
       {/* ── Pricing ── */}
-      <section id="pricing" className={styles.pricingSection} ref={pricing.ref}>
-        <div className={`${styles.pricingStrip} ${pricing.className}`}>
+      <section id="pricing" className={`${styles.pricingSection} bg-[#22c55e]`} ref={pricing.ref}>
+        <div className={`${styles.pricingStrip} ${pricing.className} !bg-black !border-black`}>
           <div className={styles.pricingHeader}>
             <div>
-              <div className={styles.pricingTitle}>Micro-Pricing</div>
-              <div className={styles.pricingSubtitle}>
+              <div className="text-[1.6rem] font-bold text-[#22c55e]">Micro-Pricing</div>
+              <div className="text-[0.88rem] text-white/70">
                 All prices in octas (1 APT = 100,000,000 octas). Discovery & messaging are free.
               </div>
             </div>
           </div>
           <div className={styles.pricingGrid}>
             {PRICING.map((p) => (
-              <div key={p.endpoint} className={styles.pricingItem}>
-                <div className={styles.pricingEndpoint}>{p.endpoint}</div>
-                <div className={styles.pricingAmount}>
+              <div key={p.endpoint} className={`${styles.pricingItem} !bg-[#22c55e] !border-[#22c55e]`}>
+                <div className="text-[1.1rem] font-mono font-semibold text-black mb-1">{p.endpoint}</div>
+                <div className="text-[2rem] font-bold leading-none text-black">
                   {p.price}
-                  <span className={styles.pricingAmountUnit}>{p.unit}</span>
+                  <span className="text-[1rem] font-normal text-black/70 ml-1.5">{p.unit}</span>
                 </div>
-                <div className={styles.pricingDesc}>{p.desc}</div>
+                <div className="text-[0.85rem] leading-[1.4] text-black/80">{p.desc}</div>
               </div>
             ))}
           </div>
@@ -718,21 +661,21 @@ export function ProjectIntro({ onEnter }: ProjectIntroProps) {
       </section>
 
       {/* ── Tech Stack ── */}
-      <section id="tech" className={styles.techSection} ref={tech.ref}>
+      <section id="tech" className={`${styles.techSection} bg-white text-black`} ref={tech.ref}>
         <div className={`${styles.sectionHeader} ${tech.className}`}>
-          <div className={styles.sectionKicker}>
+          <div className={`${styles.sectionKicker} text-[#22c55e] bg-[#22c55e]/10 border-[#22c55e]/20`}>
             <Cpu size={13} />
             Technology
           </div>
-          <h2 className={styles.sectionTitle}>Powered by cutting-edge tech</h2>
-          <p className={styles.sectionSubtitle}>
+          <h2 className="text-[clamp(2rem,4.5vw,3.2rem)] font-bold tracking-[-0.03em] leading-tight mb-4 text-black">Powered by cutting-edge tech</h2>
+          <p className="max-w-3xl mx-auto text-[1.05rem] leading-[1.6] text-black/70">
             A modern stack combining Next.js, Aptos blockchain, and AI/ML for seamless financial intelligence.
           </p>
         </div>
         <div className={`${styles.techGrid} ${tech.className}`}>
           {TECH_STACK.map((t) => (
-            <div key={t.label} className={styles.techPill}>
-              <t.icon size={16} />
+            <div key={t.label} className="inline-flex items-center gap-2 px-4 py-2 border-gray-200 bg-gray-50 border rounded-full text-[0.85rem] font-semibold text-black transition-all hover:bg-gray-100 hover:border-gray-300">
+              <t.icon size={16} className="text-[#22c55e]" />
               {t.label}
             </div>
           ))}
@@ -740,12 +683,12 @@ export function ProjectIntro({ onEnter }: ProjectIntroProps) {
       </section>
 
       {/* ── CTA ── */}
-      <section className={styles.ctaSection} ref={cta.ref}>
+      <section className={`${styles.ctaSection} bg-black text-white`} ref={cta.ref}>
         <div className={`${styles.ctaGlow} ${cta.className}`}>
-          <h2 className={styles.ctaTitle}>
-            Ready for <span className={styles.heroTitleGradient}>liftoff</span>?
+          <h2 className="text-[clamp(2.5rem,5vw,4.5rem)] font-bold tracking-[-0.03em] leading-tight mb-4 text-[#22c55e]">
+            Ready for liftoff?
           </h2>
-          <p className={styles.ctaSubtitle}>
+          <p className="max-w-2xl mx-auto text-[1.15rem] leading-[1.6] text-white/70 mb-8">
             Experience Stock Radar&apos;s autonomous financial intelligence —
             pay-per-use AI analysis with zero friction.
           </p>

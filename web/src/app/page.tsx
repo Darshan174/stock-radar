@@ -9,6 +9,7 @@ import { supabase, Analysis, Stock, hasSupabaseEnv } from "@/lib/supabase"
 import { ProjectIntro } from "@/components/project-intro"
 import { useSidebar } from "@/providers/sidebar-provider"
 import Link from "next/link"
+import { cn } from "@/lib/utils"
 
 interface SignalWithStock extends Analysis {
   stocks: Stock
@@ -210,7 +211,7 @@ export default function DashboardPage() {
                 <stat.icon className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{stat.value}</div>
+                <div className="text-2xl font-bold font-mono tabular-nums tracking-tight">{stat.value}</div>
               </CardContent>
             </Card>
           </Link>
@@ -267,21 +268,21 @@ export default function DashboardPage() {
                     </div>
                     <div>
                       <p className="font-semibold">{signal.stocks?.symbol || "Unknown"}</p>
-                      <p className="text-sm text-muted-foreground">
+                      <p className="text-sm text-muted-foreground font-mono tabular-nums mt-0.5">
                         {signal.target_price ? `Target: $${signal.target_price.toFixed(2)}` : signal.mode}
                       </p>
                     </div>
                   </div>
                   <div className="text-right flex items-center gap-4">
                     <div>
-                      <Badge variant="outline" className={getSignalColor(signal.signal)}>
-                        {signal.signal.toUpperCase()}
+                      <Badge variant="outline" className={cn(getSignalColor(signal.signal), "uppercase text-[10px] tracking-wider")}>
+                        {signal.signal.replace('_', ' ')}
                       </Badge>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        {Math.round(signal.confidence * 100)}% confidence
+                      <p className="text-xs text-muted-foreground mt-1.5 font-mono tabular-nums">
+                        {Math.round(signal.confidence * 100)}% conf
                       </p>
                     </div>
-                    <span className="text-xs text-muted-foreground w-16 text-right">
+                    <span className="text-xs text-muted-foreground w-16 text-right font-mono tabular-nums">
                       {timeAgo(signal.created_at)}
                     </span>
                   </div>

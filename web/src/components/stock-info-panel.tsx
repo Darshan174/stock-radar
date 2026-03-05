@@ -177,7 +177,7 @@ function StatItem({
                 {label}
                 {tooltip && <InfoTooltip text={tooltip} />}
             </div>
-            <div className={cn("text-sm font-semibold", valueColor)}>
+            <div className={cn("text-sm font-semibold font-mono tabular-nums tracking-tight", valueColor)}>
                 {value || "—"}
             </div>
         </div>
@@ -230,18 +230,18 @@ function OwnershipBar({ insider, institutional }: { insider?: number | null; ins
                     title={`Public: ${publicPct.toFixed(1)}%`}
                 />
             </div>
-            <div className="flex justify-between text-xs text-muted-foreground">
-                <span className="flex items-center gap-1">
+            <div className="flex justify-between text-xs text-muted-foreground font-mono tabular-nums">
+                <span className="flex items-center gap-1 font-sans">
                     <span className="h-2 w-2 rounded-full bg-blue-500" />
-                    Insiders {insiderPct.toFixed(1)}%
+                    Insiders <span className="font-mono tabular-nums ml-1">{insiderPct.toFixed(1)}%</span>
                 </span>
-                <span className="flex items-center gap-1">
+                <span className="flex items-center gap-1 font-sans">
                     <span className="h-2 w-2 rounded-full bg-cyan-500" />
-                    Institutions {instPct.toFixed(1)}%
+                    Institutions <span className="font-mono tabular-nums ml-1">{instPct.toFixed(1)}%</span>
                 </span>
-                <span className="flex items-center gap-1">
+                <span className="flex items-center gap-1 font-sans">
                     <span className="h-2 w-2 rounded-full bg-muted-foreground/20" />
-                    Public {publicPct.toFixed(1)}%
+                    Public <span className="font-mono tabular-nums ml-1">{publicPct.toFixed(1)}%</span>
                 </span>
             </div>
         </div>
@@ -267,10 +267,10 @@ function WeekRangeIndicator({
 
     return (
         <div className="space-y-2">
-            <div className="flex justify-between text-xs">
-                <span className="text-red-400">{currency}{formatNumber(low)}</span>
-                <span className="text-muted-foreground">52 Week Range</span>
-                <span className="text-green-400">{currency}{formatNumber(high)}</span>
+            <div className="flex justify-between text-xs items-center">
+                <span className="text-red-400 font-mono tabular-nums">{currency}{formatNumber(low)}</span>
+                <span className="text-muted-foreground uppercase tracking-widest text-[10px]">52 Wk Range</span>
+                <span className="text-green-400 font-mono tabular-nums">{currency}{formatNumber(high)}</span>
             </div>
             <div className="relative h-2 w-full rounded-full bg-gradient-to-r from-red-500/30 via-yellow-500/30 to-green-500/30">
                 <div

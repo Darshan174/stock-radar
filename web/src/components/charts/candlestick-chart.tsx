@@ -348,7 +348,10 @@ export function CandlestickChart({
     const x = chart.timeScale().timeToCoordinate(lastPoint.time as Time)
     const y = (mainSeries as ISeriesApi<"Line">).priceToCoordinate(lastPoint.value)
 
-    if (x == null || y == null) {
+    const containerWidth = chartContainerRef.current?.clientWidth || 0
+    const padding = 10
+
+    if (x == null || y == null || x < -padding || x > containerWidth + padding) {
       dot.style.opacity = "0"
       return
     }
@@ -367,7 +370,7 @@ export function CandlestickChart({
     if (!chartRef.current || !mainSeriesRef.current) return
 
     if (chartType === "candlestick") {
-      ;(mainSeriesRef.current as ISeriesApi<"Candlestick">).setData(chartData.candles)
+      ; (mainSeriesRef.current as ISeriesApi<"Candlestick">).setData(chartData.candles)
       lineLengthRef.current = chartData.lineData.length
     } else {
       const lineSeries = mainSeriesRef.current as ISeriesApi<"Line">
@@ -637,11 +640,11 @@ export function CandlestickChart({
       const ohlcData =
         seriesData && "open" in seriesData
           ? {
-              o: (seriesData as CandlestickData<Time>).open,
-              h: (seriesData as CandlestickData<Time>).high,
-              l: (seriesData as CandlestickData<Time>).low,
-              c: (seriesData as CandlestickData<Time>).close,
-            }
+            o: (seriesData as CandlestickData<Time>).open,
+            h: (seriesData as CandlestickData<Time>).high,
+            l: (seriesData as CandlestickData<Time>).low,
+            c: (seriesData as CandlestickData<Time>).close,
+          }
           : { o: dataPoint.open, h: dataPoint.high, l: dataPoint.low, c: dataPoint.close }
 
       setLegendData({
@@ -683,7 +686,7 @@ export function CandlestickChart({
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange)
       chart.remove()
       if (chartRef.current === chart) {
-      chartRef.current = null
+        chartRef.current = null
       }
     }
   }, [
@@ -733,7 +736,7 @@ export function CandlestickChart({
       />
       <div
         ref={liveDotRef}
-        className="pointer-events-none absolute z-10 h-2.5 w-2.5 rounded-full border-2 border-white/80 bg-blue-500 shadow-[0_0_12px_rgba(37,99,235,0.95)] stockradar-live-dot"
+        className="pointer-events-none absolute z-10 h-2.5 w-2.5 rounded-full border-2 border-white/80 bg-green-500 shadow-[0_0_12px_rgba(34,197,94,0.95)] stockradar-live-dot"
         style={{ opacity: 0, transform: "translate(-9999px,-9999px)" }}
       />
       <ChartLegend
