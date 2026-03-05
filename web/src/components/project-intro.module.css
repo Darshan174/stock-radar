@@ -1,23 +1,25 @@
 /* ============================================================
    Stock Radar — Intro Page
-   Inspired by antigravity.google + wise.com
+   Black + Green Fintech Theme with full animations
    ============================================================ */
 
 /* ---------- Root Variables ---------- */
-
 .introRoot {
   --sr-bg-deep: #000000;
-  --sr-bg-mid: #111111;
+  --sr-bg-mid: #0a0a0a;
   --sr-accent-cyan: #22c55e;
   --sr-accent-teal: #16a34a;
-  --sr-accent-green: #22c55e;
+  --sr-accent-green: #4ade80;
+  --sr-accent-blue: #22c55e;
+  --sr-accent-purple: #86efac;
+  --sr-accent-pink: #bbf7d0;
+  --sr-accent-gold: #a3e635;
   --sr-text-primary: #ffffff;
   --sr-text-secondary: #a3a3a3;
   --sr-text-dim: #737373;
-  --sr-glass-border: rgba(255, 255, 255, 0.1);
-  --sr-glass-bg: rgba(0, 0, 0, 0.4);
+  --sr-glass-border: rgb(34 197 94 / 0.18);
+  --sr-glass-bg: rgb(0 0 0 / 0.64);
 }
-
 
 /* ---------- Page Container ---------- */
 .introRoot {
@@ -40,11 +42,7 @@
 
 /* ---------- Gradient Mesh Background ---------- */
 .bgMesh {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background: transparent;
+  display: none;
 }
 
 /* ---------- Navigation ---------- */
@@ -59,7 +57,7 @@
   justify-content: space-between;
   padding: 1rem 2.75rem;
   backdrop-filter: blur(20px) saturate(1.4);
-  background: transparent;
+  background: rgb(0 0 0 / 0.7);
   border-bottom: 1px solid var(--sr-glass-border);
   transition: all 0.3s ease;
 }
@@ -82,7 +80,7 @@
   background: linear-gradient(135deg, var(--sr-accent-cyan), var(--sr-accent-teal));
   display: grid;
   place-items: center;
-  color: var(--sr-bg-deep);
+  color: #000000;
 }
 
 .navLinks {
@@ -114,8 +112,8 @@
   border-radius: 999px;
   font-size: 0.88rem;
   font-weight: 600;
-  color: #ffffff;
-  background: var(--sr-accent-cyan);
+  color: #000000;
+  background: linear-gradient(135deg, #22c55e, #4ade80);
   border: none;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -123,7 +121,7 @@
 
 .navCta:hover {
   transform: translateY(-1px);
-  background: var(--sr-accent-green);
+  box-shadow: 0 10px 26px rgb(34 197 94 / 0.25);
 }
 
 /* ---------- Hero Section ---------- */
@@ -140,17 +138,7 @@
 }
 
 .heroGlow {
-  position: absolute;
-  width: min(76vw, 48rem);
-  height: min(76vw, 48rem);
-  top: 48%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  border-radius: 999px;
-  pointer-events: none;
-  background: radial-gradient(circle at 50% 50%, rgba(34, 197, 94, 0.1), transparent 60%);
-  filter: blur(56px);
-  z-index: -1;
+  display: none;
 }
 
 .heroBadge {
@@ -182,13 +170,14 @@
 }
 
 .heroTitle {
-  font-size: clamp(2.8rem, 7vw, 5.5rem);
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.04em;
+  font-size: clamp(3rem, 7vw, 5.5rem);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
   margin-bottom: 1.5rem;
   animation: fadeSlideUp 0.8s 0.15s ease forwards;
   opacity: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 .heroTitleLine {
@@ -196,7 +185,16 @@
 }
 
 .heroTitleGradient {
-  color: var(--sr-accent-cyan);
+  background: linear-gradient(120deg,
+      #22c55e 0%,
+      #4ade80 30%,
+      #86efac 62%,
+      #bbf7d0 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  background-size: 200% auto;
+  animation: gradientShift 4s ease-in-out infinite;
 }
 
 /* Typewriter Container */
@@ -215,7 +213,7 @@
   height: 0.85em;
   margin-left: 4px;
   border-radius: 2px;
-  background: var(--sr-accent-cyan);
+  background: linear-gradient(180deg, var(--sr-accent-cyan), var(--sr-accent-teal));
   animation: cursorBlink 0.85s ease-in-out infinite;
   vertical-align: middle;
 }
@@ -224,7 +222,7 @@
   max-width: 42rem;
   font-size: clamp(1rem, 2vw, 1.22rem);
   line-height: 1.65;
-  color: #2c5928;
+  color: rgba(255, 255, 255, 0.75);
   margin: 0 auto 2.5rem;
   animation: fadeSlideUp 0.8s 0.3s ease forwards;
   opacity: 0;
@@ -253,8 +251,8 @@
   padding: 0.45rem 0.82rem;
   border-radius: 999px;
   border: 1px solid rgb(34 197 94 / 0.25);
-  background: #8ad25e;
-  color: #113210;
+  background: rgb(34 197 94 / 0.1);
+  color: rgba(255, 255, 255, 0.8);
   font-size: 0.74rem;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -270,14 +268,19 @@
   font-weight: 700;
   border: none;
   cursor: pointer;
-  color: #ffffff;
-  background: var(--sr-accent-cyan);
+  color: #000000;
+  background: linear-gradient(135deg, var(--sr-accent-cyan), var(--sr-accent-green));
+  box-shadow:
+    0 0 26px rgb(34 197 94 / 0.32),
+    0 0 64px rgb(74 222 128 / 0.13);
   transition: all 0.25s ease;
 }
 
 .btnPrimary:hover {
   transform: translateY(-2px);
-  background: var(--sr-accent-green);
+  box-shadow:
+    0 0 36px rgb(34 197 94 / 0.45),
+    0 0 92px rgb(74 222 128 / 0.2);
 }
 
 .btnSecondary {
@@ -326,7 +329,11 @@
   inset: 0;
   border-radius: inherit;
   padding: 1px;
-  background: var(--sr-glass-border);
+  background: linear-gradient(135deg,
+      transparent 26%,
+      rgb(34 197 94 / 0.24) 50%,
+      rgb(74 222 128 / 0.2) 62%,
+      transparent 78%);
   mask:
     linear-gradient(#fff 0 0) content-box,
     linear-gradient(#fff 0 0);
@@ -397,7 +404,7 @@
   width: min(72rem, 92%);
   border-radius: 1.25rem;
   border: 1px solid var(--sr-glass-border);
-  background: var(--sr-bg-mid);
+  background: linear-gradient(150deg, rgb(0 0 0 / 0.92), rgb(10 10 10 / 0.86));
   backdrop-filter: blur(16px);
   overflow: hidden;
   box-shadow:
@@ -412,7 +419,7 @@
   gap: 8px;
   padding: 0.85rem 1.25rem;
   border-bottom: 1px solid var(--sr-glass-border);
-  background: var(--sr-bg-deep);
+  background: rgb(0 0 0 / 0.55);
 }
 
 .windowDot {
@@ -472,19 +479,19 @@
 }
 
 .codeKeyword {
-  color: #71f3ff;
+  color: #4ade80;
 }
 
 .codeString {
-  color: #93ffd4;
+  color: #86efac;
 }
 
 .codeComment {
-  color: #7ba9be;
+  color: #6b7280;
 }
 
 .codeFunc {
-  color: #9cb7ff;
+  color: #a3e635;
 }
 
 .codeNumber {
@@ -492,14 +499,14 @@
 }
 
 .codeOperator {
-  color: #a7c4d5;
+  color: #9ca3af;
 }
 
 /* Terminal */
 .terminalBlock {
   border-radius: 0.75rem;
   border: 1px solid var(--sr-glass-border);
-  background: rgb(15 23 42 / 0.76);
+  background: rgb(0 0 0 / 0.76);
   padding: 1rem 1.25rem;
   flex: 1;
 }
@@ -552,9 +559,9 @@
   border-radius: 999px;
   font-size: 0.7rem;
   font-weight: 600;
-  background: rgb(220 38 38 / 0.2);
-  color: #d3ffbf;
-  border: 1px solid rgb(220 38 38 / 0.3);
+  background: rgb(34 197 94 / 0.2);
+  color: #bbf7d0;
+  border: 1px solid rgb(34 197 94 / 0.3);
 }
 
 .agentStats {
@@ -651,7 +658,11 @@
   inset: 0;
   border-radius: inherit;
   padding: 1px;
-  background: var(--sr-glass-border);
+  background: linear-gradient(135deg,
+      transparent 28%,
+      rgb(34 197 94 / 0.24) 48%,
+      rgb(74 222 128 / 0.2) 62%,
+      transparent 76%);
   mask:
     linear-gradient(#fff 0 0) content-box,
     linear-gradient(#fff 0 0);
@@ -688,33 +699,33 @@
 }
 
 .featureIconTeal {
-  background: rgb(34 197 94 / 0.14);
+  background: rgb(22 163 74 / 0.14);
   color: var(--sr-accent-teal);
-  border: 1px solid rgb(34 197 94 / 0.3);
+  border: 1px solid rgb(22 163 74 / 0.3);
 }
 
 .featureIconGreen {
-  background: rgb(220 38 38 / 0.16);
+  background: rgb(74 222 128 / 0.16);
   color: var(--sr-accent-green);
-  border: 1px solid rgb(220 38 38 / 0.3);
+  border: 1px solid rgb(74 222 128 / 0.3);
 }
 
 .featureIconBlue {
-  background: rgb(148 163 184 / 0.14);
+  background: rgb(34 197 94 / 0.14);
   color: var(--sr-accent-blue);
-  border: 1px solid rgb(148 163 184 / 0.3);
+  border: 1px solid rgb(34 197 94 / 0.3);
 }
 
 .featureIconPurple {
-  background: rgb(71 85 105 / 0.14);
+  background: rgb(134 239 172 / 0.14);
   color: var(--sr-accent-purple);
-  border: 1px solid rgb(71 85 105 / 0.3);
+  border: 1px solid rgb(134 239 172 / 0.3);
 }
 
 .featureIconGold {
-  background: rgb(148 163 184 / 0.12);
+  background: rgb(163 230 53 / 0.12);
   color: var(--sr-accent-gold);
-  border: 1px solid rgb(148 163 184 / 0.2);
+  border: 1px solid rgb(163 230 53 / 0.2);
 }
 
 .featureTitle {
@@ -742,7 +753,7 @@
   margin: 0 auto;
   border-radius: 1.5rem;
   border: 1px solid var(--sr-glass-border);
-  background: var(--sr-bg-mid);
+  background: linear-gradient(140deg, rgb(10 10 10 / 0.88), rgb(0 0 0 / 0.92));
   backdrop-filter: blur(16px);
   padding: 2.5rem;
   overflow: hidden;
@@ -790,7 +801,7 @@
   padding: 1.25rem;
   border-radius: 1rem;
   border: 1px solid var(--sr-glass-border);
-  background: #8ad25e;
+  background: rgb(0 0 0 / 0.56);
   transition: all 0.25s ease;
 }
 
@@ -877,7 +888,7 @@
   padding: 4rem 3rem;
   border-radius: 1.75rem;
   border: 1px solid var(--sr-glass-border);
-  background: linear-gradient(150deg, rgb(15 23 42 / 0.86), rgb(5 21 38 / 0.94));
+  background: linear-gradient(150deg, rgb(10 10 10 / 0.86), rgb(0 0 0 / 0.94));
   overflow: hidden;
 }
 
@@ -900,7 +911,7 @@
   position: absolute;
   inset: 1px;
   border-radius: inherit;
-  background: linear-gradient(150deg, rgb(15 23 42), rgb(5 21 38));
+  background: linear-gradient(150deg, rgb(10 10 10), rgb(0 0 0));
   z-index: -1;
 }
 
