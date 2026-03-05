@@ -1,205 +1,203 @@
-# Stock-Radar: Autonomous Financial Intelligence Agent on Aptos
+# Stock-Radar
 
-> Pay-per-use AI stock analysis powered by x402 micropayments, on-chain identity, and agent-to-agent coordination.
+Pay-per-use financial intelligence APIs with blockchain-native payments, async AI analysis jobs, and an operator-ready dashboard.
 
-No accounts. No subscriptions. Just micropayments.
+## Why Stock-Radar
+Stock-Radar is built for developers who want production-style market intelligence without subscription lock-in:
 
----
+- Query only what you need, pay only for what you call.
+- Expose discoverable machine-to-machine endpoints (`/api/agent/discover`, `/api/agent/message`).
+- Support payment-gated routes through x402 + Aptos.
+- Keep analysis state in Supabase and run compute in a dedicated Python backend.
 
-## What Is This
-
-Stock-Radar is a **verified autonomous agent** registered on the Aptos blockchain. It sells financial intelligence (momentum signals, stock scores, sentiment analysis, fundamentals) through HTTP APIs protected by the **x402 payment protocol** — the same way a web server returns `401 Unauthorized`, Stock-Radar returns `402 Payment Required` with exact payment instructions.
-
-Clients pay per request in APT (as low as 50 octas per call). After payment verification on-chain, the agent serves data and records the interaction to its **on-chain reputation** — a tamper-proof track record of requests served, success rate, and revenue earned.
-
----
+## What You Get
+- Next.js app (`web`) with dashboard + public API routes.
+- FastAPI backend (`backend`) for heavy analysis workloads.
+- Async job flow for long-running analysis (`/api/analyze` + `/api/analyze/status`).
+- Agent endpoints for momentum, scoring, sentiment, fundamentals, and orchestration.
+- On-chain agent identity/reputation integration on Aptos testnet.
 
 ## Architecture
-
-```
-stock-radar/
-├── web/                          Next.js 15 — dashboard, API routes, x402 enforcement
-│   ├── src/app/api/agent/        10 protected endpoints + discovery + messaging
-│   ├── src/lib/                  x402 protocol, agent registry, orchestrator, XMTP
-│   └── src/app/x402-demo/        Interactive payment demo with on-chain identity
-├── move-agent-registry/          Move smart contracts (Aptos testnet)
-│   └── sources/
-│       ├── minimal_registry.move Agent registration, capabilities, reputation
-│       ├── agent_registry.move   Extended registry with ratings & tags
-│       └── agent_marketplace.move Task lifecycle, escrow, disputes
-├── demo-client/                  CLI demo — full x402 flow in terminal
-├── scripts/                      Agent registration & automation
-├── xmtp/                         Agent-to-agent messaging examples
-└── src/                          Python analysis engine (LLM, technical indicators)
+```mermaid
+flowchart LR
+    U[User / Client] --> V[Vercel: Next.js Web]
+    V -->|X-Backend-Api-Key| R[Railway: FastAPI Backend]
+    V --> S[(Supabase)]
+    R --> S
+    R --> L[LLM Providers]
+    R --> M[Market Data Providers]
+    V --> A[Aptos Testnet / x402]
 ```
 
----
+## Repository Map
+- `web/`: Next.js 16 app, UI, public API routes, x402 enforcement/proxy
+- `backend/`: FastAPI service used by `web` for analysis/agent compute
+- `src/`: Python analysis engine, agents, storage, orchestration logic
+- `move-agent-registry/`: Move contracts for agent registry/reputation
+- `demo-client/`: CLI demo for payment flow
+- `docs/deploy-vercel-railway.md`: Production deployment runbook
 
-## Protected Endpoints & Pricing
+## Quick Start (Local)
+### 1. Prerequisites
+- Node.js 20+
+- Python 3.11+
+- npm
+- Supabase project (URL + keys)
 
-All prices in **octas** (1 APT = 100,000,000 octas). Discovery and messaging are free.
-
-| Endpoint | Price | Description |
-|----------|-------|-------------|
-| `/api/agent/discover` | Free | Agent capabilities, pricing, contact info |
-| `/api/agent/message` | Free | XMTP-style agent messaging |
-| `/api/agent/reputation` | Free | Live on-chain reputation data |
-| `/api/agent/momentum` | 100 | RSI, MACD, volume momentum signals |
-| `/api/agent/rsi-divergence` | 100 | Bullish/bearish divergence detection |
-| `/api/agent/social-sentiment` | 100 | Social media sentiment |
-| `/api/agent/support-resistance` | 100 | Pivot points, Bollinger Bands, ATR levels |
-| `/api/fundamentals` | 100 | P/E, P/B, ROE, margins, analyst targets |
-| `/api/agent/news-impact` | 150 | News sentiment & price impact |
-| `/api/agent/stock-score` | 200 | Multi-factor algorithmic scoring |
-| `/api/agent/orchestrate` | 400 | All analyses combined |
-| `/api/live-price` | 50 | Real-time price, volume, OHLC |
-| `/api/analyze` | 500 | Full AI analysis with LLM reasoning |
-
----
-
-## x402 Payment Flow
-
-1. **Request** — call any endpoint without payment
-2. **402 Response** — server returns amount, recipient, and deadline
-3. **Pay** — sign and submit an Aptos transfer for the exact amount
-4. **Retry** — include the transaction hash in the `X-Payment-Tx` header
-5. **Data** — server verifies on-chain, returns analysis, updates reputation
-
-Supports three verification modes: **direct** (on-chain), **facilitator** (gasless), and **hybrid** (facilitator with direct fallback).
-
----
-
-## Quick Start
-
-### 1. Install & run
-
+### 2. Configure Environment
+From repo root:
 ```bash
-cd stock-radar/web
-npm install
+cp .env.example .env
+```
+
+From `web/`:
+```bash
 cp .env.example .env.local
-# Fill in your environment variables (see .env.example for details)
+```
+
+Minimum required values:
+
+Backend (`.env`):
+- `BACKEND_API_KEY`
+- `SUPABASE_URL`
+- `SUPABASE_KEY`
+- one of `ZAI_API_KEY` or `GROQ_API_KEY` or `GEMINI_API_KEY`
+
+Web (`web/.env.local`):
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `PY_BACKEND_URL=http://localhost:8000`
+- `PY_BACKEND_API_KEY=<same as BACKEND_API_KEY>`
+
+### 3. Install Dependencies
+```bash
+# Python deps
+pip install -r requirements.txt
+
+# Web deps
+cd web
+npm install
+```
+
+### 4. Run Backend
+From repo root:
+```bash
+uvicorn backend.app:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Health check:
+```bash
+curl http://localhost:8000/health
+```
+
+### 5. Run Web App
+In a second terminal:
+```bash
+cd web
 npm run dev
 ```
 
-### 2. Interactive demo
+Open:
+- `http://localhost:3000`
+- `http://localhost:3000/x402-demo`
 
-Open **http://localhost:3000/x402-demo** — select a wallet, pick an endpoint, enter a stock symbol, and watch the live x402 payment flow.
-
-### 3. CLI demo
-
+## API Quickstart
+### Service Health
 ```bash
-cd demo-client
-npm install
-cp .env.example .env
-# Add your Aptos private key to .env
-npm run demo
+curl -s http://localhost:3000/api/health | jq .
 ```
 
-### 4. Agent discovery
-
+### Agent Discovery
 ```bash
-curl http://localhost:3000/api/agent/discover | jq .
-curl http://localhost:3000/api/agent/reputation | jq .
+curl -s http://localhost:3000/api/agent/discover | jq .
 ```
 
-### 5. Phase 10 runtime controls (Python engine)
-
+### Submit Async Analysis
 ```bash
-# From repo root
-python main.py paper dashboard
-python main.py canary status
-python main.py audit report
-```
-
-Core environment flags for execution hardening:
-
-- `BROKER_MODE`, `BROKER_RETRY_MAX`, `BROKER_RETRY_BACKOFF`
-- `PRE_TRADE_RISK_ENABLED`, `PRE_TRADE_MAX_POSITION`, `PRE_TRADE_MAX_SECTOR`
-- `PRE_TRADE_MAX_DAILY_LOSS_PCT`, `PRE_TRADE_MAX_EXPOSURE`
-- `CANARY_ENABLED`, `CANARY_DIR`, `CANARY_SYMBOLS`, `CANARY_MAX_TRADES`, `CANARY_MAX_LOSS_PCT`
-- `AUDIT_ENABLED`, `AUDIT_DIR`
-
----
-
-## On-Chain Agent Identity
-
-Stock-Radar is registered on Aptos testnet with 10 declared capabilities and live reputation tracking.
-
-**Move modules deployed:**
-
-| Module | Purpose |
-|--------|---------|
-| `minimal_registry` | Agent registration, capability catalog, reputation counters |
-| `agent_registry` | Extended identity — name, description, tags, star ratings |
-| `agent_marketplace` | Task creation, assignment, escrow, dispute resolution |
-
-After every paid API call, reputation is updated on-chain automatically — total requests, successes, and earnings are all recorded to the contract.
-
----
-
-## Task Orchestration
-
-The `/api/agent/orchestrate` endpoint runs sub-analyses in parallel:
-
-```
-POST /api/agent/orchestrate { symbol: "AAPL" }
-              |
-    ┌─────────┼─────────┐
-    v         v         v
-Momentum  Fundamentals  Sentiment
-(40%)       (40%)       (20%)
-    └────┬────┘────┬────┘
-         v         v
-   Weighted Aggregate → Combined Signal + Score
-```
-
-Priced at 400 octas (discount vs 450+ if called individually).
-
----
-
-## Agent-to-Agent Messaging
-
-Stock-Radar exposes an XMTP-compatible HTTP endpoint for agent communication — capability discovery, pricing negotiation, and task requests.
-
-```bash
-# Discover capabilities
-curl -X POST http://localhost:3000/api/agent/message \
+curl -s -X POST http://localhost:3000/api/analyze \
   -H "Content-Type: application/json" \
-  -d '{"protocol":"agent-xmtp-v1","message_type":"capability_discovery","payload":{}}'
+  -d '{"symbol":"AAPL","mode":"intraday"}' | jq .
 ```
 
----
-
-## Deploy Move Contracts
-
+### Poll Analysis Status
 ```bash
-cd move-agent-registry
-aptos move compile --named-addresses agent_registry=default
-aptos move publish --named-addresses agent_registry=default --assume-yes
-node scripts/register-agent.js
+curl -s "http://localhost:3000/api/analyze/status?jobId=<JOB_ID>" | jq .
 ```
 
----
+### Ask Endpoint
+```bash
+curl -s -X POST http://localhost:3000/api/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Summarize AAPL momentum","symbol":"AAPL"}' | jq .
+```
 
-## Tech Stack
+## x402-Paid Endpoint Examples
+Without payment header, paid routes return HTTP `402`:
+```bash
+curl -i "http://localhost:3000/api/agent/momentum?symbol=AAPL"
+```
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Next.js 15, React 19, Tailwind CSS 4, Radix UI |
-| Blockchain | Aptos testnet, Move language |
-| Wallet | Petra (AIP-62), @aptos-labs/ts-sdk |
-| AI/LLM | Zhipu AI (GLM-5), Gemini fallback |
-| Database | Supabase (PostgreSQL) |
-| Messaging | XMTP protocol over HTTP |
+For internal/testing bypass flows, configure `INTERNAL_API_KEY` and pass:
+```bash
+-H "X-Internal-Key: <INTERNAL_API_KEY>"
+```
 
----
+## Deploy (Recommended: Vercel + Railway)
+Use split deployment:
+- `web` on Vercel
+- `backend` on Railway (Dockerfile: `Dockerfile.backend`)
 
-## What Makes This Different
+Authoritative guide:
+- [docs/deploy-vercel-railway.md](docs/deploy-vercel-railway.md)
 
-- **x402 as a native protocol** — HTTP 402 was reserved for "future use" since 1997. This implements it for real: any HTTP client that can read a 402 response and submit an Aptos transaction can use the API. No SDK required, no registration.
+High-level order:
+1. Deploy Railway backend first.
+2. Set Railway envs (`BACKEND_API_KEY`, Supabase, LLM keys).
+3. Deploy Vercel web with `PY_BACKEND_URL` + matching `PY_BACKEND_API_KEY`.
+4. Run smoke tests (`/api/health`, `/api/analyze`, `/api/analyze/status`).
 
-- **On-chain agent identity** — Stock-Radar is a registered entity on Aptos with a verifiable track record. Other agents can check its reputation before paying.
+## Common Troubleshooting
+### `Set PY_BACKEND_URL and PY_BACKEND_API_KEY`
+Vercel web env is missing backend proxy settings.
 
-- **Agent-to-agent economy** — x402 (payment) + XMTP (messaging) + on-chain registry (identity) + task orchestrator (coordination) = infrastructure for agents to discover, negotiate, pay, and rate each other without human intermediaries.
+### `Backend service unavailable`
+Usually key mismatch:
+- Vercel `PY_BACKEND_API_KEY` must equal Railway `BACKEND_API_KEY`.
 
-- **Micro-pricing** — 50 octas for a live quote. 100 for momentum analysis. Granular enough for agents to make thousands of decisions without expensive subscriptions.
+### `supabaseUrl is required`
+Set both:
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+### Build fails on Docker `COPY data/ data/`
+`data/` is gitignored. Use current Dockerfiles that create `data/` during build.
+
+## Quality Checks
+From repo root:
+```bash
+pytest tests/ -v
+ruff check src/ tests/ backend/
+```
+
+From `web/`:
+```bash
+npm run lint
+npm run build
+```
+
+## Contributing
+1. Create a branch from `main`.
+2. Keep API contracts stable (`web/src/lib/analyze-contracts.ts`).
+3. Update docs if env vars or endpoints change.
+4. Open a PR with:
+   - what changed
+   - why
+   - verification steps/screenshots
+
+## Security Notes
+- Never commit `.env` files or private keys.
+- Rotate any key that was ever pasted publicly.
+- Keep backend auth enabled (`BACKEND_API_KEY`).
+
+## License
+No license file is currently included. Add one before open-source distribution.
