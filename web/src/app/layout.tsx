@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
-import { AppSidebar } from "@/components/app-sidebar";
+import { AppHeader } from "@/components/app-header";
 import { MainContent } from "@/components/main-content";
 import { AptosWalletProvider } from "@/providers/aptos-wallet-provider";
 import { SidebarProvider } from "@/providers/sidebar-provider";
@@ -57,7 +57,7 @@ export default function RootLayout({
       <body className={`${inter.className} ${jetbrainsMono.variable} font-sans antialiased bg-background text-foreground`}>
         <AptosWalletProvider>
           <SidebarProvider>
-            <AppSidebar />
+            <AppHeader />
             <MainContent>
               {children}
             </MainContent>

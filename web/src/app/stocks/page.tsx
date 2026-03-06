@@ -1,11 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ChatContextBadge } from "@/components/chat-context-badge"
+import { StockChatButton } from "@/components/stock-chat-button"
 import {
   Dialog,
   DialogContent,
@@ -23,6 +25,7 @@ interface StockWithPrice extends Stock {
   latest_price?: number
   price_change?: number
   sparkline_data?: { time: string; value: number }[]
+  analysis_count: number
 }
 
 interface IntradayApiResponse {
@@ -126,7 +129,7 @@ export default function StocksPage() {
     throw new Error("Analysis timed out. Please try again.")
   }
 
-  async function fetchStocks() {
+  const fetchStocks = useCallback(async () => {
     try {
       const { data: stocksData, error } = await supabase
         .from("stocks")
@@ -139,6 +142,21 @@ export default function StocksPage() {
       }
 
       if (stocksData) {
+        const stockIds = stocksData.map((stock) => stock.id)
+        const analysisCounts = new Map<number, number>()
+
+        if (stockIds.length > 0) {
+          const { data: analysesData } = await supabase
+            .from("analysis")
+            .select("stock_id")
+            .in("stock_id", stockIds)
+
+          for (const analysis of analysesData || []) {
+            const currentCount = analysisCounts.get(analysis.stock_id) || 0
+            analysisCounts.set(analysis.stock_id, currentCount + 1)
+          }
+        }
+
         // First, quickly load stocks with historical data
         const stocksWithHistoricalPrices = await Promise.all(
           stocksData.map(async (stock) => {
@@ -169,7 +187,13 @@ export default function StocksPage() {
               }))
             }
 
-            return { ...stock, latest_price, price_change, sparkline_data }
+            return {
+              ...stock,
+              latest_price,
+              price_change,
+              sparkline_data,
+              analysis_count: analysisCounts.get(stock.id) || 0,
+            }
           })
         )
 
@@ -204,7 +228,7 @@ export default function StocksPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   // Refresh live prices periodically
   useEffect(() => {
@@ -232,7 +256,7 @@ export default function StocksPage() {
     }, 30000) // Refresh every 30 seconds
 
     return () => clearInterval(priceRefreshInterval)
-  }, [loading, stocks.length]) // Only depend on length to avoid infinite loop
+  }, [loading, stocks])
 
   useEffect(() => {
     fetchStocks()
@@ -250,7 +274,7 @@ export default function StocksPage() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [])
+  }, [fetchStocks])
 
   async function handleAddStock() {
     if (!newSymbol.trim()) {
@@ -667,23 +691,31 @@ export default function StocksPage() {
                         )}
                       </div>
                       <p className="text-sm text-muted-foreground">{stock.sector || stock.exchange}</p>
+                      <ChatContextBadge analysisCount={stock.analysis_count} className="mt-2" />
                     </div>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={(e) => handleAnalyze(e, stock.symbol)}
-                      disabled={analyzing === stock.symbol}
-                      className="shrink-0"
-                    >
-                      {analyzing === stock.symbol ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <>
-                          <Play className="h-3 w-3 mr-1" />
-                          Analyze
-                        </>
-                      )}
-                    </Button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <StockChatButton
+                        symbol={stock.symbol}
+                        hasAnalysis={stock.analysis_count > 0}
+                        stopPropagation={true}
+                      />
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={(e) => handleAnalyze(e, stock.symbol)}
+                        disabled={analyzing === stock.symbol}
+                        className="shrink-0"
+                      >
+                        {analyzing === stock.symbol ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <>
+                            <Play className="h-3 w-3 mr-1" />
+                            Analyze
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
                   {feedback && (
                     <div className={`mt-2 inline-flex items-center gap-1 text-xs font-medium ${getAnalyzeFeedbackClass(feedback.state)}`}>

@@ -11,8 +11,9 @@ import { AIAnalysisPanel } from "@/components/ai-analysis-panel"
 import { StockInfoPanel } from "@/components/stock-info-panel"
 import { AdvancedChartsPanel } from "@/components/advanced-charts-panel"
 import { LivePriceTicker } from "@/components/live-price-ticker"
-import { FloatingChat } from "@/components/chat-assistant"
 import { RAGInsightsPanel } from "@/components/rag-insights-panel"
+import { ChatContextBadge } from "@/components/chat-context-badge"
+import { StockChatButton } from "@/components/stock-chat-button"
 import {
   ArrowLeft,
   TrendingUp,
@@ -27,6 +28,7 @@ import {
   ChevronUp,
   Brain,
   Database,
+  type LucideIcon,
 } from "lucide-react"
 import { RAGBadge } from "@/components/rag-badge"
 import { supabase, Stock, Analysis } from "@/lib/supabase"
@@ -102,6 +104,60 @@ function getAnalyzeStatusClass(state: "idle" | "queued" | "running" | "succeeded
     default:
       return "text-muted-foreground"
   }
+}
+
+function formatRelativeTime(dateStr: string) {
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMinutes = Math.floor(diffMs / (1000 * 60))
+  const diffHours = Math.floor(diffMinutes / 60)
+  const diffDays = Math.floor(diffHours / 24)
+
+  if (diffMinutes < 1) return "just now"
+  if (diffMinutes < 60) return `${diffMinutes}m ago`
+  if (diffHours < 24) return `${diffHours}h ago`
+  return `${diffDays}d ago`
+}
+
+function formatMoney(value: number | null | undefined, currency: string) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "N/A"
+  return `${currency}${value.toFixed(2)}`
+}
+
+function getPriceMovePercent(currentPrice: number | undefined, level: number | null | undefined) {
+  if (typeof currentPrice !== "number" || typeof level !== "number" || currentPrice === 0) return null
+  return ((level - currentPrice) / currentPrice) * 100
+}
+
+function formatPriceRelation(currentPrice: number | undefined, level: number | null | undefined) {
+  const move = getPriceMovePercent(currentPrice, level)
+  if (move === null) return "No live comparison"
+  if (Math.abs(move) < 0.05) return "At current price"
+  return `${Math.abs(move).toFixed(1)}% ${move > 0 ? "above" : "below"} current`
+}
+
+function getRiskRewardValue(analysis: Analysis, currentPrice: number | undefined) {
+  if (typeof analysis.risk_reward_ratio === "number" && Number.isFinite(analysis.risk_reward_ratio)) {
+    return analysis.risk_reward_ratio
+  }
+
+  if (
+    typeof currentPrice !== "number" ||
+    typeof analysis.target_price !== "number" ||
+    typeof analysis.stop_loss !== "number"
+  ) {
+    return null
+  }
+
+  const reward = Math.abs(analysis.target_price - currentPrice)
+  const risk = Math.abs(currentPrice - analysis.stop_loss)
+  if (risk <= 0) return null
+  return reward / risk
+}
+
+function getAnalysisModeLabel(mode: Analysis["mode"]) {
+  return mode === "intraday" ? "Intraday" : "Long-term"
 }
 
 export default function StockDetailPage() {
@@ -422,6 +478,79 @@ export default function StockDetailPage() {
   }
 
   const latestAnalysis = stock.analyses[0] as AnalysisWithAlgo | undefined
+  const hasAnalysis = stock.analyses.length > 0
+  const analysisCount = stock.analyses.length
+  const priceDisplayCurrency = stock.currency === "INR" ? "\u20B9" : "$"
+  const currentSetupPrice = livePrice?.price ?? (chartData.length > 0 ? chartData[chartData.length - 1].close : undefined)
+  const tradeSetupLevels = latestAnalysis
+    ? [
+      {
+        key: "target",
+        label: "Target",
+        value: latestAnalysis.target_price,
+        description: "Primary take-profit level from the latest analysis.",
+        color: "text-green-400",
+        barClass: "bg-green-400",
+        Icon: Target,
+      },
+      {
+        key: "resistance",
+        label: "Resistance",
+        value: latestAnalysis.resistance_level,
+        description: "Area where selling pressure may start to build.",
+        color: "text-violet-300",
+        barClass: "bg-violet-400",
+        Icon: TrendingUp,
+      },
+      {
+        key: "current",
+        label: "Current",
+        value: currentSetupPrice,
+        description: livePrice ? "Streaming live price." : "Latest chart close.",
+        color: "text-white",
+        barClass: "bg-white",
+        Icon: BarChart3,
+      },
+      {
+        key: "support",
+        label: "Support",
+        value: latestAnalysis.support_level,
+        description: "Area where buyers may start defending the price.",
+        color: "text-sky-300",
+        barClass: "bg-sky-400",
+        Icon: TrendingDown,
+      },
+      {
+        key: "stop",
+        label: "Stop",
+        value: latestAnalysis.stop_loss,
+        description: "Suggested invalidation level if the setup fails.",
+        color: "text-red-400",
+        barClass: "bg-red-400",
+        Icon: ShieldAlert,
+      },
+    ].filter((level): level is {
+      key: string
+      label: string
+      value: number
+      description: string
+      color: string
+      barClass: string
+      Icon: LucideIcon
+    } => typeof level.value === "number" && Number.isFinite(level.value))
+    : []
+  const tradeRange = tradeSetupLevels.reduce(
+    (range, level) => ({
+      min: Math.min(range.min, level.value),
+      max: Math.max(range.max, level.value),
+    }),
+    { min: Number.POSITIVE_INFINITY, max: Number.NEGATIVE_INFINITY }
+  )
+  const tradeRangeSpan =
+    Number.isFinite(tradeRange.max) && Number.isFinite(tradeRange.min)
+      ? Math.max(tradeRange.max - tradeRange.min, 1)
+      : 1
+  const riskRewardValue = latestAnalysis ? getRiskRewardValue(latestAnalysis, currentSetupPrice) : null
 
   return (
     <div className="app-page">
@@ -447,9 +576,11 @@ export default function StockDetailPage() {
           <div className="flex items-center gap-4">
             <LivePriceTicker
               symbol={stock.symbol}
-              currency={stock.currency === "INR" ? "\u20B9" : "$"}
+              currency={priceDisplayCurrency}
               livePriceOverride={livePrice}
             />
+            <StockChatButton symbol={stock.symbol} hasAnalysis={hasAnalysis} />
+            <ChatContextBadge analysisCount={analysisCount} showCount={true} />
             <Button onClick={handleAnalyze} disabled={analyzing}>
               {analyzing ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -618,64 +749,150 @@ export default function StockDetailPage() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid gap-4 md:grid-cols-2">
-        {/* Price Targets */}
-        <Card>
+      <div className="grid gap-4">
+        <Card className="border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 via-background to-background">
           <CardHeader>
-            <CardTitle>Price Targets</CardTitle>
-            <CardDescription>AI-generated price levels</CardDescription>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <CardTitle>Trade Setup</CardTitle>
+                <CardDescription>
+                  {latestAnalysis
+                    ? `${getAnalysisModeLabel(latestAnalysis.mode)} setup from ${formatRelativeTime(latestAnalysis.created_at)} with ${Math.round(latestAnalysis.confidence * 100)}% confidence`
+                    : "AI-generated trade levels and context"}
+                </CardDescription>
+              </div>
+              {latestAnalysis && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className={getSignalColor(latestAnalysis.signal)}>
+                    {latestAnalysis.signal.toUpperCase()}
+                  </Badge>
+                  <Badge variant="outline" className="border-white/10 bg-white/5 text-white/80">
+                    {getAnalysisModeLabel(latestAnalysis.mode)}
+                  </Badge>
+                </div>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
             {latestAnalysis ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-3 rounded-lg bg-green-500/10">
-                  <div className="flex items-center gap-2">
-                    <Target className="h-4 w-4 text-green-500" />
-                    <span>Target Price</span>
+              <div className="space-y-5">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-xl border border-white/10 bg-black/30 p-4">
+                    <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Current Price</div>
+                    <div className="mt-2 text-2xl font-semibold text-white">
+                      {formatMoney(currentSetupPrice, priceDisplayCurrency)}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {livePrice ? "Live market price" : "Using latest chart close"}
+                    </div>
                   </div>
-                  <span className="font-bold text-green-500">
-                    {latestAnalysis.target_price
-                      ? `${stock.currency === "INR" ? "\u20B9" : "$"}${latestAnalysis.target_price.toFixed(2)}`
-                      : "N/A"}
-                  </span>
+                  <div className="rounded-xl border border-green-500/20 bg-green-500/10 p-4">
+                    <div className="text-xs uppercase tracking-[0.18em] text-green-200/80">Target Move</div>
+                    <div className="mt-2 text-2xl font-semibold text-green-300">
+                      {formatMoney(latestAnalysis.target_price, priceDisplayCurrency)}
+                    </div>
+                    <div className="mt-1 text-xs text-green-100/80">
+                      {formatPriceRelation(currentSetupPrice, latestAnalysis.target_price)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4">
+                    <div className="text-xs uppercase tracking-[0.18em] text-red-200/80">Stop Buffer</div>
+                    <div className="mt-2 text-2xl font-semibold text-red-300">
+                      {formatMoney(latestAnalysis.stop_loss, priceDisplayCurrency)}
+                    </div>
+                    <div className="mt-1 text-xs text-red-100/80">
+                      {formatPriceRelation(currentSetupPrice, latestAnalysis.stop_loss)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-4">
+                    <div className="text-xs uppercase tracking-[0.18em] text-cyan-100/80">Risk / Reward</div>
+                    <div className="mt-2 text-2xl font-semibold text-cyan-200">
+                      {riskRewardValue !== null ? `${riskRewardValue.toFixed(1)}:1` : "N/A"}
+                    </div>
+                    <div className="mt-1 text-xs text-cyan-50/80">
+                      {riskRewardValue !== null
+                        ? riskRewardValue >= 2
+                          ? "Favorable setup"
+                          : "Moderate setup"
+                        : "Needs target and stop"}
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center justify-between p-3 rounded-lg bg-red-500/10">
-                  <div className="flex items-center gap-2">
-                    <ShieldAlert className="h-4 w-4 text-red-500" />
-                    <span>Stop Loss</span>
+
+                <div className="rounded-xl border border-white/10 bg-black/25 p-4">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-medium text-white">Level Ladder</div>
+                      <div className="text-xs text-muted-foreground">
+                        Higher rows sit above lower rows in the current setup.
+                      </div>
+                    </div>
+                    <div className="text-right text-xs text-muted-foreground">
+                      <div>Range</div>
+                      <div className="text-white/80">
+                        {formatMoney(tradeRange.min, priceDisplayCurrency)} to {formatMoney(tradeRange.max, priceDisplayCurrency)}
+                      </div>
+                    </div>
                   </div>
-                  <span className="font-bold text-red-500">
-                    {latestAnalysis.stop_loss
-                      ? `${stock.currency === "INR" ? "\u20B9" : "$"}${latestAnalysis.stop_loss.toFixed(2)}`
-                      : "N/A"}
-                  </span>
+
+                  <div className="space-y-3">
+                    {[...tradeSetupLevels]
+                      .sort((a, b) => b.value - a.value)
+                      .map((level) => {
+                        const position = ((level.value - tradeRange.min) / tradeRangeSpan) * 100
+
+                        return (
+                          <div key={level.key} className="grid gap-2 rounded-lg border border-white/5 bg-white/[0.03] p-3 lg:grid-cols-[120px_minmax(0,1fr)_180px] lg:items-center">
+                            <div className={`flex items-center gap-2 text-sm font-medium ${level.color}`}>
+                              <level.Icon className="h-4 w-4" />
+                              {level.label}
+                            </div>
+                            <div className="space-y-2">
+                              <div className="relative h-2 rounded-full bg-white/10">
+                                <div
+                                  className={`absolute top-0 h-2 w-4 -translate-x-1/2 rounded-full shadow-[0_0_12px_-2px_rgba(255,255,255,0.45)] ${level.barClass}`}
+                                  style={{ left: `${Math.min(Math.max(position, 2), 98)}%` }}
+                                />
+                              </div>
+                              <p className="text-xs text-muted-foreground">{level.description}</p>
+                            </div>
+                            <div className="text-left lg:text-right">
+                              <div className={`text-lg font-semibold ${level.color}`}>
+                                {formatMoney(level.value, priceDisplayCurrency)}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {formatPriceRelation(currentSetupPrice, level.value)}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                  </div>
                 </div>
-                <div className="flex items-center justify-between p-3 rounded-lg bg-blue-500/10">
-                  <div className="flex items-center gap-2">
-                    <TrendingDown className="h-4 w-4 text-blue-500" />
-                    <span>Support</span>
+
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="rounded-xl border border-white/10 bg-muted/20 p-4">
+                    <div className="text-sm font-medium text-white">Setup Summary</div>
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                      {latestAnalysis.technical_summary || latestAnalysis.reasoning || "No detailed summary available yet."}
+                    </p>
                   </div>
-                  <span className="font-bold text-blue-500">
-                    {latestAnalysis.support_level
-                      ? `${stock.currency === "INR" ? "\u20B9" : "$"}${latestAnalysis.support_level.toFixed(2)}`
-                      : "N/A"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between p-3 rounded-lg bg-purple-500/10">
-                  <div className="flex items-center gap-2">
-                    <TrendingUp className="h-4 w-4 text-purple-500" />
-                    <span>Resistance</span>
+                  <div className="rounded-xl border border-white/10 bg-muted/20 p-4">
+                    <div className="text-sm font-medium text-white">How to Read It</div>
+                    <div className="mt-2 space-y-2 text-sm text-muted-foreground">
+                      <p>
+                        Target and resistance show where upside may slow or profits may be taken.
+                      </p>
+                      <p>
+                        Support and stop show where the setup starts weakening and risk should be reassessed.
+                      </p>
+                    </div>
                   </div>
-                  <span className="font-bold text-purple-500">
-                    {latestAnalysis.resistance_level
-                      ? `${stock.currency === "INR" ? "\u20B9" : "$"}${latestAnalysis.resistance_level.toFixed(2)}`
-                      : "N/A"}
-                  </span>
                 </div>
               </div>
             ) : (
               <p className="text-muted-foreground text-center py-4">
-                No price targets available
+                No trade setup available
               </p>
             )}
           </CardContent>
@@ -727,8 +944,6 @@ export default function StockDetailPage() {
         </Card>
       )}
 
-      {/* Floating Chat Assistant */}
-      <FloatingChat defaultSymbol={stock.symbol} />
     </div>
   )
 }

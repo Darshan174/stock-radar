@@ -43,6 +43,7 @@ export interface Analysis {
     resistance_level: number | null
     target_price: number | null
     stop_loss: number | null
+    risk_reward_ratio?: number | null
     llm_model: string
     embedding_text?: string | null
     created_at: string

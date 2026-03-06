@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { TrendingUp, TrendingDown, Minus, Zap, BarChart3, Activity, MessageSquare, CreditCard } from "lucide-react"
+import { TrendingUp, TrendingDown, Minus, Zap, BarChart3, Activity, CreditCard } from "lucide-react"
 import { supabase, Analysis, Stock, hasSupabaseEnv } from "@/lib/supabase"
 import { ProjectIntro } from "@/components/project-intro"
 import { useSidebar } from "@/providers/sidebar-provider"
@@ -161,7 +161,6 @@ export default function DashboardPage() {
   const stats = [
     { label: "Active Stocks", value: stockCount.toString(), icon: Activity, href: "/stocks" },
     { label: "Signals Today", value: signalsToday.toString(), icon: Zap, href: "/signals" },
-    { label: "AI Chat", value: "Ask Assistant", icon: MessageSquare, href: "/chat" },
     { label: "Aptos Payment", value: "x402 Demo", icon: CreditCard, href: "/x402-demo" },
     { label: "API Usage", value: "View Details", icon: BarChart3, href: "/usage" },
   ]
@@ -181,8 +180,8 @@ export default function DashboardPage() {
           <Skeleton className="h-9 w-48 mb-2" />
           <Skeleton className="h-5 w-64" />
         </div>
-        <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5 mb-8">
-          {[1, 2, 3, 4, 5].map((i) => (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8">
+          {[1, 2, 3, 4].map((i) => (
             <Skeleton key={i} className="h-[132px]" />
           ))}
         </div>
@@ -200,7 +199,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5 mb-8">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8">
         {stats.map((stat) => (
           <Link key={stat.label} href={stat.href}>
             <Card className="h-[132px] hover:bg-muted/50 transition-colors">

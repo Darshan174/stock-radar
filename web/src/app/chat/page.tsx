@@ -1,137 +1,43 @@
-"use client"
-
-import { ChatAssistant } from "@/components/chat-assistant"
+import Link from "next/link"
+import { ArrowRight, MessageSquare, Search } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Database, Brain, MessageSquare, TrendingUp, Newspaper, FileText } from "lucide-react"
 
 export default function ChatPage() {
   return (
-    <div className="app-page h-[calc(100vh-1rem)] flex flex-col">
-      <div className="app-page-header mb-4">
-        <h1 className="app-page-title">AI Chat</h1>
-        <p className="app-page-subtitle">RAG-powered assistant for stock and market questions</p>
-      </div>
-
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-0">
-        {/* Chat Interface */}
-        <div className="lg:col-span-3 min-h-0">
-          <ChatAssistant className="h-full" />
-        </div>
-
-        {/* Info Sidebar */}
-        <div className="space-y-4 overflow-y-auto">
-          {/* How It Works */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Brain className="h-4 w-4" />
-                How RAG Works
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm text-muted-foreground space-y-3">
-              <div className="flex gap-2">
-                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-medium">
-                  1
-                </div>
-                <p>Your question is converted to a semantic embedding</p>
-              </div>
-              <div className="flex gap-2">
-                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-medium">
-                  2
-                </div>
-                <p>We search our database for similar content</p>
-              </div>
-              <div className="flex gap-2">
-                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-medium">
-                  3
-                </div>
-                <p>Relevant context is retrieved and ranked</p>
-              </div>
-              <div className="flex gap-2">
-                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-medium">
-                  4
-                </div>
-                <p>AI generates an informed response using the context</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Data Sources */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Database className="h-4 w-4" />
-                Data Sources
-              </CardTitle>
-              <CardDescription className="text-xs">
-                Context retrieved from:
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="flex items-center gap-2 text-sm">
-                <TrendingUp className="h-4 w-4 text-green-500" />
-                <span>Past Analyses & Signals</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm">
-                <Newspaper className="h-4 w-4 text-blue-500" />
-                <span>News Articles</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm">
-                <FileText className="h-4 w-4 text-purple-500" />
-                <span>Knowledge Base</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm">
-                <MessageSquare className="h-4 w-4 text-orange-500" />
-                <span>Chat History</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Example Questions */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <MessageSquare className="h-4 w-4" />
-                Example Questions
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {[
-                "What was the last signal for RELIANCE?",
-                "Why did TCS get a sell signal?",
-                "Compare the momentum of INFY and WIPRO",
-                "What news is affecting IT stocks?",
-                "Explain the RSI indicator",
-                "Which stocks have buy signals today?",
-              ].map((question, idx) => (
-                <div
-                  key={idx}
-                  className="text-xs text-muted-foreground p-2 rounded bg-muted/50 hover:bg-muted cursor-pointer transition-colors"
-                >
-                  &quot;{question}&quot;
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          {/* Features */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm">Features</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-1">
-                <Badge variant="secondary" className="text-xs">Semantic Search</Badge>
-                <Badge variant="secondary" className="text-xs">Vector DB</Badge>
-                <Badge variant="secondary" className="text-xs">Multi-source</Badge>
-                <Badge variant="secondary" className="text-xs">Context-aware</Badge>
-                <Badge variant="secondary" className="text-xs">Real-time</Badge>
-                <Badge variant="secondary" className="text-xs">Historical</Badge>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+    <div className="app-page">
+      <div className="mx-auto max-w-3xl">
+        <Card className="border-dashed">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full border border-cyan-500/20 bg-cyan-500/10 text-cyan-300">
+              <MessageSquare className="h-6 w-6" />
+            </div>
+            <CardTitle>AI chat moved into Stocks</CardTitle>
+            <CardDescription>
+              Open chat from a stock that already has saved analysis history.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 pb-8 text-center">
+            <div className="rounded-lg border border-white/10 bg-black/40 p-4 text-sm text-muted-foreground">
+              Stocks with analysis show an active chat button.
+              Stocks without analysis show a disabled black-and-white chat button with an info tooltip.
+            </div>
+            <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
+              <Button asChild>
+                <Link href="/stocks">
+                  <Search className="h-4 w-4" />
+                  Open Watchlist
+                </Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link href="/signals">
+                  View Signals
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )

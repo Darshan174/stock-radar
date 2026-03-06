@@ -30,7 +30,6 @@ import {
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import { RAGBadge } from "./rag-badge"
-import { useSidebar } from "@/providers/sidebar-provider"
 
 interface ChatMessage {
   id: string
@@ -82,7 +81,6 @@ export function ChatAssistant({
   defaultSymbol,
   isFloating = false,
 }: ChatAssistantProps) {
-  const { collapsed } = useSidebar()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -91,8 +89,19 @@ export function ChatAssistant({
   const [sessionId, setSessionId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const floatingLeftClass = collapsed ? "md:left-[88px]" : "md:left-[280px]"
-  const expandedLeftClass = collapsed ? "md:left-16" : "md:left-64"
+  const floatingLeftClass = "md:left-6"
+  const expandedLeftClass = "md:left-6"
+  const suggestedQuestions = defaultSymbol
+    ? [
+      `What's the latest analysis for ${defaultSymbol}?`,
+      `Why did ${defaultSymbol} get its last signal?`,
+      `Summarize the recent news and risk factors for ${defaultSymbol}.`,
+    ]
+    : [
+      "What's the latest analysis for RELIANCE?",
+      "Explain the current market sentiment",
+      "Compare TCS and INFY",
+    ]
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -194,18 +203,18 @@ export function ChatAssistant({
         {messages.length === 0 ? (
           <div className="text-center text-muted-foreground py-8">
             <Bot className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-lg font-medium">Stock Radar AI Assistant</p>
+            <p className="text-lg font-medium">
+              {defaultSymbol ? `${defaultSymbol} AI Assistant` : "Stock Radar AI Assistant"}
+            </p>
             <p className="text-sm mt-2">
-              Ask me anything about stocks, analyses, or market conditions.
+              {defaultSymbol
+                ? `Ask about saved analyses, signals, and news for ${defaultSymbol}.`
+                : "Ask me anything about stocks, analyses, or market conditions."}
             </p>
             <div className="mt-4 space-y-2">
               <p className="text-xs">Try asking:</p>
               <div className="flex flex-wrap gap-2 justify-center">
-                {[
-                  "What's the latest analysis for RELIANCE?",
-                  "Explain the current market sentiment",
-                  "Compare TCS and INFY",
-                ].map((suggestion) => (
+                {suggestedQuestions.map((suggestion) => (
                   <Button
                     key={suggestion}
                     variant="outline"
@@ -340,7 +349,11 @@ export function ChatAssistant({
         <div className="flex gap-2">
           <Input
             ref={inputRef}
-            placeholder="Ask about stocks, analyses, market conditions..."
+            placeholder={
+              defaultSymbol
+                ? `Ask about ${defaultSymbol}'s saved analyses and context...`
+                : "Ask about stocks, analyses, market conditions..."
+            }
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyPress}
@@ -452,7 +465,9 @@ export function ChatAssistant({
               <RAGBadge isActive={true} size="md" />
             </div>
             <CardDescription>
-              RAG-powered conversations about stocks and market analysis
+              {defaultSymbol
+                ? `RAG-powered conversations for ${defaultSymbol} using saved analysis context`
+                : "RAG-powered conversations about stocks and market analysis"}
             </CardDescription>
           </div>
         </div>
