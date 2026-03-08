@@ -973,7 +973,22 @@ class StockFetcher:
                 quotes[symbol] = quote
         return quotes
 
-    def get_full_analysis_data(self, symbol: str, period: str = "2y") -> Dict[str, Any]:
+    def _resolve_analysis_history_config(self, mode: str, period: str) -> tuple[str, str]:
+        """Choose a practical history window and bar size for each analysis mode."""
+        normalized_mode = "longterm" if mode == "longterm" else "intraday"
+
+        if normalized_mode == "intraday":
+            if period == "1d":
+                return "1d", "5m"
+            if period == "5d":
+                return "5d", "15m"
+            return "5d", "15m"
+
+        allowed_periods = {"6mo", "1y", "2y", "5y", "10y", "max"}
+        effective_period = period if period in allowed_periods else "5y"
+        return effective_period, "1wk"
+
+    def get_full_analysis_data(self, symbol: str, period: str = "2y", mode: Optional[str] = None) -> Dict[str, Any]:
         """
         Get all data needed for analysis using parallel fetching.
 
@@ -984,13 +999,21 @@ class StockFetcher:
         Args:
             symbol: Stock symbol (e.g., 'RELIANCE.NS', 'AAPL')
             period: Historical data period ('1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max')
+            mode: Analysis mode ('intraday' or 'longterm'); when omitted, uses the legacy daily-history fetch
 
         Returns:
             Dictionary with quote, history, indicators, fundamentals, and news
         """
         import time as _time
         fetch_start = _time.time()
-        logger.info(f"Fetching full analysis data for {symbol} (period={period}, parallel=True)")
+        if mode in {"intraday", "longterm"}:
+            history_period, history_interval = self._resolve_analysis_history_config(mode, period)
+        else:
+            history_period, history_interval = period, "1d"
+        logger.info(
+            f"Fetching full analysis data for {symbol} "
+            f"(mode={mode or 'default'}, period={history_period}, interval={history_interval}, parallel=True)"
+        )
 
         # Try realtime WebSocket cache for instant quote
         rt_quote = None
@@ -1014,7 +1037,7 @@ class StockFetcher:
             if not rt_quote:
                 futures["quote"] = pool.submit(self.get_quote, symbol)
 
-            futures["history"] = pool.submit(self.get_price_history, symbol, period, "1d")
+            futures["history"] = pool.submit(self.get_price_history, symbol, history_period, history_interval)
             futures["fundamentals"] = pool.submit(self.get_fundamentals, symbol)
             futures["news_yahoo"] = pool.submit(self.get_news_yahoo, symbol)
 
@@ -1057,6 +1080,8 @@ class StockFetcher:
             "fundamentals": results.get("fundamentals"),
             "news": news_yahoo + news_finnhub,
             "finnhub_sentiment": results.get("finnhub_sentiment"),
+            "history_period": history_period,
+            "history_interval": history_interval,
             "fetched_at": datetime.now(timezone.utc).isoformat()
         }
 

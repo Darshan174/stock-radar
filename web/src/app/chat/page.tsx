@@ -9,7 +9,7 @@ export default function ChatPage() {
       <div className="mx-auto max-w-3xl">
         <Card className="border-dashed">
           <CardHeader className="text-center">
-            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full border border-cyan-500/20 bg-cyan-500/10 text-cyan-300">
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full border border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-500/20 dark:bg-cyan-500/10 dark:text-cyan-300">
               <MessageSquare className="h-6 w-6" />
             </div>
             <CardTitle>AI chat moved into Stocks</CardTitle>

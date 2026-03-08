@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { AnalysisModeToggle } from "@/components/analysis-mode-toggle"
 import { ChatContextBadge } from "@/components/chat-context-badge"
 import { StockChatButton } from "@/components/stock-chat-button"
 import {
@@ -19,6 +20,12 @@ import {
 } from "@/components/ui/dialog"
 import { Sparkline } from "@/components/charts"
 import { Plus, TrendingUp, TrendingDown, Loader2, Play, CheckCircle, XCircle } from "lucide-react"
+import {
+  getAnalysisModeLabel,
+  getDefaultAnalysisPeriod,
+  loadStoredAnalysisMode,
+  type AnalysisMode,
+} from "@/lib/analysis-mode"
 import { supabase, Stock } from "@/lib/supabase"
 
 interface StockWithPrice extends Stock {
@@ -68,6 +75,11 @@ export default function StocksPage() {
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
   const [analyzeFeedback, setAnalyzeFeedback] = useState<Record<string, AnalyzeFeedback>>({})
+  const [selectedMode, setSelectedMode] = useState<AnalysisMode>("intraday")
+
+  useEffect(() => {
+    setSelectedMode(loadStoredAnalysisMode())
+  }, [])
 
   async function fetchQuoteSnapshot(symbol: string): Promise<Pick<StockWithPrice, "latest_price" | "price_change"> | null> {
     const response = await fetch(`/api/intraday?symbol=${encodeURIComponent(symbol)}&interval=5m&range=1d`, {
@@ -287,10 +299,15 @@ export default function StocksPage() {
     setSuccess("")
 
     try {
+      const modeLabel = getAnalysisModeLabel(selectedMode)
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: newSymbol.toUpperCase() }),
+        body: JSON.stringify({
+          symbol: newSymbol.toUpperCase(),
+          mode: selectedMode,
+          period: getDefaultAnalysisPeriod(selectedMode),
+        }),
       })
 
       const data = await response.json()
@@ -305,10 +322,10 @@ export default function StocksPage() {
         return
       }
 
-      setSuccess(`Analysis queued for ${newSymbol.toUpperCase()}...`)
+      setSuccess(`${modeLabel} analysis queued for ${newSymbol.toUpperCase()}...`)
       await waitForAnalyzeJob(data.jobId)
 
-      setSuccess(`Successfully added ${newSymbol.toUpperCase()}!`)
+      setSuccess(`Added ${newSymbol.toUpperCase()} with ${modeLabel} analysis.`)
       setNewSymbol("")
 
       // Wait a bit then close dialog
@@ -328,16 +345,21 @@ export default function StocksPage() {
     e.stopPropagation()
     setAnalyzing(symbol)
     setError("")
+    const modeLabel = getAnalysisModeLabel(selectedMode)
     setAnalyzeFeedback((prev) => ({
       ...prev,
-      [symbol]: { state: "queued", message: "Analysis queued..." },
+      [symbol]: { state: "queued", message: `${modeLabel} analysis queued...` },
     }))
 
     try {
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol }),
+        body: JSON.stringify({
+          symbol,
+          mode: selectedMode,
+          period: getDefaultAnalysisPeriod(selectedMode),
+        }),
       })
 
       const data = await response.json()
@@ -361,12 +383,12 @@ export default function StocksPage() {
 
       setAnalyzeFeedback((prev) => ({
         ...prev,
-        [symbol]: { state: "running", message: "Analysis running..." },
+        [symbol]: { state: "running", message: `${modeLabel} analysis running...` },
       }))
       await waitForAnalyzeJob(data.jobId)
       setAnalyzeFeedback((prev) => ({
         ...prev,
-        [symbol]: { state: "succeeded", message: "Analysis complete" },
+        [symbol]: { state: "succeeded", message: `${modeLabel} analysis complete` },
       }))
       fetchStocks()
       setTimeout(() => {
@@ -436,11 +458,20 @@ export default function StocksPage() {
             <DialogHeader>
               <DialogTitle>Add Stock to Watchlist</DialogTitle>
               <DialogDescription>
-                Enter a stock symbol to analyze and add to your watchlist.
+                Enter a stock symbol to analyze in the selected mode and add to your watchlist.
                 This may take up to 2 minutes.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Analysis mode</p>
+                <AnalysisModeToggle
+                  mode={selectedMode}
+                  onModeChange={setSelectedMode}
+                  compact
+                  showDescription
+                />
+              </div>
               <div className="space-y-2">
                 <Input
                   placeholder="Enter symbol (e.g., AAPL, RELIANCE.NS)"
@@ -611,12 +642,22 @@ export default function StocksPage() {
                     Analyzing...
                   </>
                 ) : (
-                  "Add & Analyze"
+                  `Add & Analyze ${getAnalysisModeLabel(selectedMode)}`
                 )}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
+      </div>
+
+      <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-border/70 bg-card/70 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-sm font-medium">Analyze Mode</p>
+          <p className="text-sm text-muted-foreground">
+            Applies to the Add Stock and Analyze actions on this page.
+          </p>
+        </div>
+        <AnalysisModeToggle mode={selectedMode} onModeChange={setSelectedMode} compact />
       </div>
 
       {stocks.length === 0 ? (

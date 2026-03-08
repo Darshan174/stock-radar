@@ -26,7 +26,7 @@ export function getChatContextMeta(analysisCount: number): ChatContextMeta {
       level: "rich",
       label: "Rich context",
       description: "5+ saved analyses. Best for stronger comparisons, trend consistency checks, and historical Q&A.",
-      className: "border-cyan-500/30 bg-cyan-500/10 text-cyan-300",
+      className: "border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-300",
     }
   }
 
@@ -35,7 +35,7 @@ export function getChatContextMeta(analysisCount: number): ChatContextMeta {
       level: "good",
       label: "Good context",
       description: "3-4 saved analyses. Enough history for solid follow-up questions and pattern comparisons.",
-      className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+      className: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
     }
   }
 
@@ -44,7 +44,7 @@ export function getChatContextMeta(analysisCount: number): ChatContextMeta {
       level: "limited",
       label: "Limited context",
       description: "1-2 saved analyses. Good for explaining the latest report, but historical context is still thin.",
-      className: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+      className: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200",
     }
   }
 
@@ -52,7 +52,7 @@ export function getChatContextMeta(analysisCount: number): ChatContextMeta {
     level: "locked",
     label: "Chat locked",
     description: "No saved analyses yet. Run at least one analysis to unlock stock chat.",
-    className: "border-white/15 bg-black text-white/70 grayscale saturate-0",
+    className: "border-slate-300 bg-slate-100 text-slate-600 grayscale saturate-0 dark:border-white/15 dark:bg-black dark:text-white/70",
   }
 }
 

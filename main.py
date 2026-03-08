@@ -114,7 +114,7 @@ class StockRadar:
         try:
             # Step 1: Fetch stock data
             logger.info(f"[1/5] Fetching data for {symbol}...")
-            data = self.fetcher.get_full_analysis_data(symbol, period=period)
+            data = self.fetcher.get_full_analysis_data(symbol, period=period, mode=mode)
 
             if "error" in data:
                 logger.error(f"Failed to fetch data: {data['error']}")

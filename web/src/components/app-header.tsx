@@ -11,6 +11,7 @@ import {
     Settings,
     Radar,
     CreditCard,
+    BookOpen,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 // Note: we still use "useSidebar" to check if the intro is hiding the nav
@@ -26,6 +27,7 @@ const navItems = [
     { href: "/", label: "Dashboard", description: "Market overview and recent signals", icon: LayoutDashboard },
     { href: "/stocks", label: "Stocks", description: "Detailed stock analysis and charts", icon: TrendingUp },
     { href: "/signals", label: "Signals", description: "Trading signals and alerts", icon: Zap },
+    { href: "/docs", label: "Docs", description: "Architecture & engineering documentation", icon: BookOpen },
     { href: "/usage", label: "API Usage", description: "Monitor your API requests and limits", icon: BarChart3 },
     { href: "/x402-demo", label: "x402 Demo", description: "Aptos blockchain integration demo", icon: CreditCard },
     { href: "/settings", label: "Settings", description: "Application preferences and configurations", icon: Settings },

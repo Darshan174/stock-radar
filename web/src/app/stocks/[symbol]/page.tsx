@@ -1,11 +1,12 @@
 "use client"
 
-import { useEffect, useMemo, useState, type ComponentProps } from "react"
+import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
+import { AnalysisModeToggle } from "@/components/analysis-mode-toggle"
 import { CandlestickChart } from "@/components/charts"
 import { AIAnalysisPanel } from "@/components/ai-analysis-panel"
 import { StockInfoPanel } from "@/components/stock-info-panel"
@@ -31,6 +32,12 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { RAGBadge } from "@/components/rag-badge"
+import {
+  getAnalysisModeLabel,
+  getDefaultAnalysisPeriod,
+  loadStoredAnalysisMode,
+  type AnalysisMode,
+} from "@/lib/analysis-mode"
 import { supabase, Stock, Analysis } from "@/lib/supabase"
 import { useLiveStockData } from "@/hooks/use-live-stock-data"
 import type { AnalyzeJobCreated, AnalyzeJobStatus } from "@/lib/analyze-contracts"
@@ -156,10 +163,6 @@ function getRiskRewardValue(analysis: Analysis, currentPrice: number | undefined
   return reward / risk
 }
 
-function getAnalysisModeLabel(mode: Analysis["mode"]) {
-  return mode === "intraday" ? "Intraday" : "Long-term"
-}
-
 export default function StockDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -182,57 +185,72 @@ export default function StockDetailPage() {
   const [chartLoading, setChartLoading] = useState(true)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [ragPanelOpen, setRagPanelOpen] = useState(false)
+  const [selectedMode, setSelectedMode] = useState<AnalysisMode>(loadStoredAnalysisMode)
+
+  const fetchStockInfo = useCallback(async () => {
+    try {
+      const { data: stockData } = await supabase
+        .from("stocks")
+        .select("*")
+        .eq("symbol", symbol.toUpperCase())
+        .single()
+
+      if (!stockData) {
+        setStock(null)
+        setLoading(false)
+        return
+      }
+
+      const { data: analyses } = await supabase
+        .from("analysis")
+        .select("*")
+        .eq("stock_id", stockData.id)
+        .order("created_at", { ascending: false })
+        .limit(10)
+
+      setStock({
+        ...stockData,
+        analyses: analyses || [],
+      })
+
+      try {
+        const fundResponse = await fetch(`/api/fundamentals?symbol=${symbol}`)
+        if (fundResponse.ok) {
+          const fundData = await fundResponse.json()
+          if (fundData && !fundData.error) {
+            setFundamentals({ ...fundData, symbol })
+          }
+        }
+      } catch (fundError) {
+        console.error("Error fetching fundamentals:", fundError)
+      }
+    } catch (error) {
+      console.error("Error fetching stock:", error)
+    } finally {
+      setLoading(false)
+    }
+  }, [symbol])
 
   // Fetch stock info + analyses from Supabase
   useEffect(() => {
-    async function fetchStockInfo() {
-      try {
-        const { data: stockData } = await supabase
-          .from("stocks")
-          .select("*")
-          .eq("symbol", symbol.toUpperCase())
-          .single()
-
-        if (!stockData) {
-          setLoading(false)
-          return
-        }
-
-        const { data: analyses } = await supabase
-          .from("analysis")
-          .select("*")
-          .eq("stock_id", stockData.id)
-          .order("created_at", { ascending: false })
-          .limit(10)
-
-        setStock({
-          ...stockData,
-          analyses: analyses || [],
-        })
-
-        // Fetch fundamentals
-        try {
-          const fundResponse = await fetch(`/api/fundamentals?symbol=${symbol}`)
-          if (fundResponse.ok) {
-            const fundData = await fundResponse.json()
-            if (fundData && !fundData.error) {
-              setFundamentals({ ...fundData, symbol })
-            }
-          }
-        } catch (fundError) {
-          console.error("Error fetching fundamentals:", fundError)
-        }
-      } catch (error) {
-        console.error("Error fetching stock:", error)
-      } finally {
-        setLoading(false)
-      }
-    }
-
     if (symbol) {
       fetchStockInfo()
     }
-  }, [symbol])
+  }, [fetchStockInfo, symbol])
+
+  useEffect(() => {
+    if (!stock) return
+
+    const hasSelectedModeAnalysis = stock.analyses.some((analysis) => analysis.mode === selectedMode)
+    if (hasSelectedModeAnalysis || stock.analyses.length === 0) {
+      return
+    }
+
+    const fallbackMode = stock.analyses.some((analysis) => analysis.mode === "intraday")
+      ? "intraday"
+      : "longterm"
+    setSelectedMode(fallbackMode)
+  }, [selectedMode, stock])
 
   // Fetch chart data from Yahoo Finance (independent of analysis)
   useEffect(() => {
@@ -389,7 +407,11 @@ export default function StockDetailPage() {
       }
 
       setAnalyzeState(statusData.status === "queued" ? "queued" : "running")
-      setAnalyzeMessage(statusData.status === "queued" ? "Analysis queued..." : "Analysis running...")
+      setAnalyzeMessage(
+        statusData.status === "queued"
+          ? `${getAnalysisModeLabel(selectedMode)} analysis queued...`
+          : `${getAnalysisModeLabel(selectedMode)} analysis running...`
+      )
 
       await new Promise((resolve) => setTimeout(resolve, 2000))
     }
@@ -400,12 +422,16 @@ export default function StockDetailPage() {
   async function handleAnalyze() {
     setAnalyzing(true)
     setAnalyzeState("queued")
-    setAnalyzeMessage("Submitting analysis job...")
+    setAnalyzeMessage(`Submitting ${getAnalysisModeLabel(selectedMode)} analysis job...`)
     try {
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol }),
+        body: JSON.stringify({
+          symbol,
+          mode: selectedMode,
+          period: getDefaultAnalysisPeriod(selectedMode),
+        }),
       })
 
       const data = (await response.json()) as Partial<AnalyzeJobCreated> & { error?: string }
@@ -418,14 +444,13 @@ export default function StockDetailPage() {
       }
 
       setAnalyzeState("running")
-      setAnalyzeMessage("Analysis running...")
+      setAnalyzeMessage(`${getAnalysisModeLabel(selectedMode)} analysis running...`)
       await waitForAnalyzeJob(data.jobId)
 
       setAnalyzeState("succeeded")
-      setAnalyzeMessage("Analysis complete. Refreshing...")
-      window.setTimeout(() => {
-        window.location.reload()
-      }, 900)
+      setAnalyzeMessage(`${getAnalysisModeLabel(selectedMode)} analysis complete. Refreshing...`)
+      await fetchStockInfo()
+      setAiPanelOpen(true)
     } catch (error) {
       console.error("Analysis error:", error)
       setAnalyzeState("failed")
@@ -438,13 +463,14 @@ export default function StockDetailPage() {
   const signals = useMemo(
     () =>
       (stock?.analyses || [])
+        .filter((a) => a.mode === selectedMode)
         .filter((a) => ["buy", "strong_buy", "sell", "strong_sell"].includes(a.signal))
         .map((a) => ({
           time: a.created_at.split("T")[0],
           type: a.signal.includes("buy") ? ("buy" as const) : ("sell" as const),
           price: a.target_price || 0,
         })),
-    [stock?.analyses]
+    [selectedMode, stock?.analyses]
   )
 
   if (loading) {
@@ -477,9 +503,15 @@ export default function StockDetailPage() {
     )
   }
 
-  const latestAnalysis = stock.analyses[0] as AnalysisWithAlgo | undefined
+  const intradayAnalyses = stock.analyses.filter((analysis) => analysis.mode === "intraday") as AnalysisWithAlgo[]
+  const longtermAnalyses = stock.analyses.filter((analysis) => analysis.mode === "longterm") as AnalysisWithAlgo[]
+  const selectedAnalyses = selectedMode === "intraday" ? intradayAnalyses : longtermAnalyses
+  const latestIntradayAnalysis = intradayAnalyses[0]
+  const latestLongtermAnalysis = longtermAnalyses[0]
+  const latestAnalysis = selectedAnalyses[0]
   const hasAnalysis = stock.analyses.length > 0
   const analysisCount = stock.analyses.length
+  const selectedModeCount = selectedAnalyses.length
   const priceDisplayCurrency = stock.currency === "INR" ? "\u20B9" : "$"
   const currentSetupPrice = livePrice?.price ?? (chartData.length > 0 ? chartData[chartData.length - 1].close : undefined)
   const tradeSetupLevels = latestAnalysis
@@ -555,7 +587,7 @@ export default function StockDetailPage() {
   return (
     <div className="app-page">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => router.back()}>
             <ArrowLeft className="h-5 w-5" />
@@ -568,12 +600,16 @@ export default function StockDetailPage() {
                   {latestAnalysis.signal.toUpperCase()}
                 </Badge>
               )}
+              <Badge variant="outline" className="border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-500/20 dark:bg-cyan-500/10 dark:text-cyan-200">
+                {getAnalysisModeLabel(selectedMode)}
+              </Badge>
             </div>
             <p className="app-page-subtitle">{stock.name}</p>
           </div>
         </div>
-        <div className="flex flex-col items-end gap-1.5">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-col gap-3 lg:items-end">
+          <AnalysisModeToggle mode={selectedMode} onModeChange={setSelectedMode} compact />
+          <div className="flex flex-wrap items-center gap-4 lg:justify-end">
             <LivePriceTicker
               symbol={stock.symbol}
               currency={priceDisplayCurrency}
@@ -587,13 +623,69 @@ export default function StockDetailPage() {
               ) : (
                 <Play className="h-4 w-4 mr-2" />
               )}
-              Analyze
+              Run {getAnalysisModeLabel(selectedMode)}
             </Button>
           </div>
           {analyzeState !== "idle" && (
             <p className={`text-xs ${getAnalyzeStatusClass(analyzeState)}`}>{analyzeMessage}</p>
           )}
         </div>
+      </div>
+
+      <div className="mb-4 grid gap-3 md:grid-cols-2">
+        {([
+          { mode: "intraday" as const, latest: latestIntradayAnalysis, count: intradayAnalyses.length },
+          { mode: "longterm" as const, latest: latestLongtermAnalysis, count: longtermAnalyses.length },
+        ]).map(({ mode, latest, count }) => {
+          const isActive = selectedMode === mode
+
+          return (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setSelectedMode(mode)}
+              className={`rounded-2xl border p-4 text-left transition-colors ${
+                isActive
+                  ? "border-cyan-400/50 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.18)]"
+                  : "border-border/70 bg-card/70 hover:bg-accent/35"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">Latest {getAnalysisModeLabel(mode)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {count === 0 ? "No saved analysis yet" : `${count} saved ${count === 1 ? "analysis" : "analyses"}`}
+                  </p>
+                </div>
+                {latest ? (
+                  <Badge variant="outline" className={getSignalColor(latest.signal)}>
+                    {latest.signal.toUpperCase()}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="border-dashed text-muted-foreground">
+                    Empty
+                  </Badge>
+                )}
+              </div>
+              <div className="mt-4">
+                {latest ? (
+                  <>
+                    <p className="text-sm font-medium text-foreground">
+                      {Math.round(latest.confidence * 100)}% confidence
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {formatRelativeTime(latest.created_at)} · {latest.technical_summary || latest.reasoning}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Run a {getAnalysisModeLabel(mode).toLowerCase()} analysis to create a mode-specific setup and history.
+                  </p>
+                )}
+              </div>
+            </button>
+          )
+        })}
       </div>
 
       {/* AI Analysis Panel - Collapsible */}
@@ -604,7 +696,7 @@ export default function StockDetailPage() {
         >
           <div className="flex items-center gap-3">
             <Brain className="h-4 w-4 text-purple-500" />
-            <span className="font-medium text-sm">AI Analysis</span>
+            <span className="font-medium text-sm">AI Analysis · {getAnalysisModeLabel(selectedMode)}</span>
             {latestAnalysis && (
               <>
                 <Badge variant="outline" className={getSignalColor(latestAnalysis.signal)}>
@@ -892,7 +984,7 @@ export default function StockDetailPage() {
               </div>
             ) : (
               <p className="text-muted-foreground text-center py-4">
-                No trade setup available
+                No {getAnalysisModeLabel(selectedMode).toLowerCase()} trade setup available yet.
               </p>
             )}
           </CardContent>
@@ -900,15 +992,17 @@ export default function StockDetailPage() {
       </div>
 
       {/* Analysis History */}
-      {stock.analyses.length > 1 && (
+      {selectedModeCount > 1 && (
         <Card className="mt-4">
           <CardHeader>
-            <CardTitle>Analysis History</CardTitle>
-            <CardDescription>Previous {stock.analyses.length} analyses</CardDescription>
+            <CardTitle>{getAnalysisModeLabel(selectedMode)} History</CardTitle>
+            <CardDescription>
+              Previous {selectedModeCount - 1} {selectedModeCount - 1 === 1 ? "analysis" : "analyses"} for this mode
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {stock.analyses.slice(1).map((analysis) => (
+              {selectedAnalyses.slice(1).map((analysis) => (
                 <div
                   key={analysis.id}
                   className="flex items-center justify-between p-3 rounded-lg border"
@@ -920,6 +1014,9 @@ export default function StockDetailPage() {
                     <span className="text-sm text-muted-foreground">
                       {Math.round(analysis.confidence * 100)}% confidence
                     </span>
+                    <Badge variant="outline" className="border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-500/20 dark:bg-cyan-500/10 dark:text-cyan-200">
+                      {getAnalysisModeLabel(analysis.mode)}
+                    </Badge>
                     <div className="flex items-center gap-2">
                       {analysis.llm_model && (
                         <span className="flex items-center gap-1 text-xs text-blue-400">

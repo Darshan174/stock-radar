@@ -99,7 +99,7 @@ export default function StockChatPage() {
 
         <Card className="mx-auto max-w-2xl border-dashed">
           <CardHeader className="text-center">
-            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full border border-white/15 bg-black text-white/70 grayscale saturate-0">
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full border border-slate-300 bg-slate-100 text-slate-600 grayscale saturate-0 dark:border-white/15 dark:bg-black dark:text-white/70">
               <Lock className="h-6 w-6" />
             </div>
             <CardTitle>Chat unavailable for {state.stock.symbol}</CardTitle>
@@ -129,7 +129,7 @@ export default function StockChatPage() {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="app-page-title">{state.stock.symbol} Chat</h1>
-              <Badge variant="outline" className="border-cyan-500/30 bg-cyan-500/10 text-cyan-300">
+              <Badge variant="outline" className="border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-300">
                 Analysis Ready
               </Badge>
               <ChatContextBadge analysisCount={state.analysisCount} showCount={true} />
@@ -139,7 +139,7 @@ export default function StockChatPage() {
             </p>
           </div>
         </div>
-        <div className="hidden items-center gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100 md:flex">
+        <div className="hidden items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm text-cyan-700 dark:border-cyan-500/20 dark:bg-cyan-500/10 dark:text-cyan-100 md:flex">
           <MessageSquare className="h-4 w-4" />
           Stock-scoped chat
         </div>

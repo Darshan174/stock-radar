@@ -37,7 +37,7 @@ export function StockChatButton({
         size={size}
         variant="secondary"
         className={cn(
-          "border border-cyan-500/20 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/20",
+          "border border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 dark:border-cyan-500/20 dark:bg-cyan-500/10 dark:text-cyan-100 dark:hover:bg-cyan-500/20",
           className
         )}
       >
@@ -63,13 +63,13 @@ export function StockChatButton({
             variant="outline"
             aria-disabled="true"
             className={cn(
-              "cursor-not-allowed border-white/15 bg-black text-white/60 grayscale saturate-0 hover:bg-black hover:text-white/60 dark:border-white/15 dark:bg-black dark:hover:bg-black",
+              "cursor-not-allowed border-slate-300 bg-slate-100 text-slate-500 grayscale saturate-0 hover:bg-slate-100 hover:text-slate-500 dark:border-white/15 dark:bg-black dark:text-white/60 dark:hover:bg-black dark:hover:text-white/60",
               className
             )}
           >
             <span className="relative inline-flex">
               <MessageSquare className="h-3.5 w-3.5" />
-              <X className="absolute -right-1.5 -top-1.5 h-3 w-3 rounded-full bg-black text-white" />
+              <X className="absolute -right-1.5 -top-1.5 h-3 w-3 rounded-full bg-slate-100 text-slate-700 dark:bg-black dark:text-white" />
             </span>
             {label}
           </Button>
