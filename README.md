@@ -1,5 +1,5 @@
 # Stock-Radar
-Link: https://stock-radar-9t24-72jgrdui7-darshans-projects-84a52e39.vercel.app/
+Link: https://stock-radar-9t24-g1nmffqdl-darshans-projects-84a52e39.vercel.app/
 
 Pay-per-use financial intelligence APIs with blockchain-native payments, async AI analysis jobs, and an operator-ready dashboard.
 
