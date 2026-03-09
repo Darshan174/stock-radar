@@ -654,7 +654,7 @@ export default function StocksPage() {
         <div>
           <p className="text-sm font-medium">Analyze Mode</p>
           <p className="text-sm text-muted-foreground">
-            Applies to the Add Stock and Analyze actions on this page.
+            Choose what kind of analysis the next run should create. This controls Add Stock and Analyze on this page.
           </p>
         </div>
         <AnalysisModeToggle mode={selectedMode} onModeChange={setSelectedMode} compact />

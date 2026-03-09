@@ -148,34 +148,51 @@ When you call `radar.analyze_stock("AAPL", mode="intraday")`, here's exactly wha
 
 ```
 Step 1: FETCH DATA
-    └─ Calls fetcher.get_full_analysis_data("AAPL")
-    └─ Runs 5 API calls IN PARALLEL (ThreadPoolExecutor):
-        • get_quote()           → Current price, volume, change
-        • get_price_history()   → Historical OHLCV bars
-        • get_fundamentals()    → P/E, ROE, revenue, etc.
-        • get_news_yahoo()      → Recent news articles
-        • get_news_finnhub()    → Finnhub news (if API key set)
+    └─ Calls fetcher.get_full_analysis_data("AAPL", mode="intraday")
+    └─ Mode-aware history resolution:
+        • Intraday  → 5d of 15-min bars (or 1d of 5-min bars)
+        • Longterm  → 5y of weekly bars (up to "max")
+    └─ Runs up to 6 API calls IN PARALLEL (ThreadPoolExecutor):
+        • get_quote()             → Current price, volume, change
+        • get_price_history()     → Mode-appropriate OHLCV bars
+        • get_fundamentals()      → 50+ data points (valuation, profitability, growth, etc.)
+        • get_news_yahoo()        → Recent news articles
+        • get_news_finnhub()      → Finnhub news (if API key set)
+        • get_sentiment_finnhub() → Finnhub aggregate sentiment (if API key set)
+    └─ Checks Finnhub WebSocket cache for instant quote (< 60s freshness)
     └─ Calculates technical indicators from price history:
         RSI, MACD, Bollinger Bands, ATR, VWAP, ADX
-    └─ Also fetches social sentiment from Reddit (ApeWisdom API)
+    └─ Fetches social sentiment from Reddit (ApeWisdom API)
 
 Step 2: AI ANALYSIS
     └─ Sends everything to analyzer.analyze_intraday() or analyze_longterm()
-    └─ Builds a structured prompt with all the data
+    └─ Retrieves RAG context (similar past analyses, signals, news by vector similarity)
+    └─ Builds a structured prompt with all data + RAG context:
+        • Intraday: price, volume, technicals, news, social sentiment, RAG context
+        • Longterm: price, 52-wk range, valuation (P/E, PEG, P/B, P/S), profitability
+                    (margins, ROE, ROA), growth (revenue, earnings), financial health
+                    (current ratio, D/E, FCF), dividends, analyst consensus, technicals, RAG
     └─ Calls the LLM with fallback chain: Groq → Z.AI GLM → Gemini
     └─ Parses the JSON response into a Signal (strong_buy/buy/hold/sell/strong_sell)
-    └─ If RAG is enabled, retrieves historical context and validates the analysis
+    └─ Runs RAG Validation: Faithfulness, Context Relevancy, Groundedness, Temporal Validity
+    └─ Each analysis receives a letter grade (A through F)
 
 Step 3: VERIFICATION (Optional)
     └─ Uses a second LLM call to cross-check the analysis
     └─ Checks: Does the signal match the technicals? Are price levels reasonable?
 
 Step 3.5: ALGO PREDICTION
-    └─ Runs algorithmic scoring (StockScorer) — pure math, no AI
-    └─ If ML model exists, runs SignalPredictor for a trained prediction
+    └─ Tries ML model first (RegimeAwarePredictor → general SignalPredictor)
+        • Passes OHLCV series for Phase-5 factor/microstructure features
+        • Passes headlines + timestamps for Phase-6 FinBERT sentiment momentum
+        • Passes Finnhub aggregate sentiment for external sentiment integration
+    └─ Falls back to StockScorer formulas (always available) — pure math, no AI
+    └─ Uses LLM only to *explain* the scores — never to *generate* them
     └─ Classifies market regime (bull/bear/neutral/volatile)
-    └─ Calculates position size based on risk parameters
-    └─ Sets stop-loss and take-profit levels using ATR
+    └─ Calculates position size based on signal, confidence, volatility & regime
+    └─ Computes stop-loss / take-profit from ATR with risk-reward ratio
+    └─ Per-trade risk budgeting: auto-scales position if risk exceeds 2% of portfolio
+    └─ Returns full score breakdowns (per-indicator contribution) for transparency
 
 Step 3.6: PAPER TRADING (If Enabled)
     └─ Checks kill switches (max daily loss, stale data, slippage)
@@ -203,7 +220,7 @@ Step 5: ALERT
 
 ### 4.1 StockFetcher — The Data Collector
 
-**File:** `src/agents/fetcher.py` (1,196 lines)
+**File:** `src/agents/fetcher.py` (1,221 lines)
 **Analogy:** The researcher who goes out, gathers all the raw information, and brings it back organized.
 
 **What it fetches and from where:**
@@ -212,9 +229,9 @@ Step 5: ALERT
 |-----------|---------------|----------|-----------|
 | Live Quotes | Twelve Data | Yahoo Finance (yfinance) | REST API |
 | Price History (30+ years) | Twelve Data | Yahoo Finance | REST API |
-| Fundamentals (P/E, ROE, etc.) | Yahoo Finance | — | REST API |
+| Fundamentals (50+ data points) | Yahoo Finance | — | REST API |
 | News | Yahoo Finance + Finnhub | Yahoo alone | REST API |
-| Social Sentiment | Finnhub | — | REST API |
+| Aggregate Sentiment | Finnhub | — | REST API |
 | Reddit Buzz | ApeWisdom | — | REST API (free, no key) |
 
 **Key Data Structures:**
@@ -251,22 +268,51 @@ class PriceData:
     timeframe: str   # "1d", "1h", "5m", etc.
 ```
 
+**Mode-Aware History Resolution:**
+
+A key enhancement: the fetcher tailors the history window and bar size to the analysis mode via `_resolve_analysis_history_config(mode, period)`. This ensures the AI receives the right granularity of data:
+
+| Mode | Period | Resulting Window | Bar Size | Why |
+|------|--------|-----------------|----------|-----|
+| Intraday | `1d` | 1 day | 5-min bars | Captures micro price action for day trading |
+| Intraday | `5d` (default) | 5 days | 15-min bars | Captures multi-day patterns without noise |
+| Longterm | `5y` (default) | 5 years | Weekly bars | Captures secular trends and cycles |
+| Longterm | `max` | Max available | Weekly bars | Full company history for deep analysis |
+
 **The Parallel Fetching Pattern (`get_full_analysis_data`):**
 
-This is one of the most important engineering patterns in the project. Instead of calling 5 APIs one-by-one (which would take 5 × 3 seconds = 15 seconds), we call them all at the same time:
+This is one of the most important engineering patterns in the project. Instead of calling APIs one-by-one (which would take ~15 seconds), we call them all simultaneously — and when Finnhub is configured, we run **6 parallel tasks** including sentiment:
 
 ```python
 with ThreadPoolExecutor(max_workers=5) as pool:
-    futures = {
-        "quote": pool.submit(self.get_quote, symbol),
-        "history": pool.submit(self.get_price_history, symbol, period),
-        "fundamentals": pool.submit(self.get_fundamentals, symbol),
-        "news_yahoo": pool.submit(self.get_news_yahoo, symbol),
-        "news_finnhub": pool.submit(self.get_news_finnhub, symbol),
-    }
-    # All 5 calls run simultaneously
-    # Total time = max(single call) ≈ 3 seconds instead of 15
+    futures = {}
+    if not rt_quote:  # Skip if realtime WebSocket cache has fresh data
+        futures["quote"] = pool.submit(self.get_quote, symbol)
+    futures["history"] = pool.submit(self.get_price_history, symbol, period, interval)
+    futures["fundamentals"] = pool.submit(self.get_fundamentals, symbol)
+    futures["news_yahoo"] = pool.submit(self.get_news_yahoo, symbol)
+    if self.finnhub_key:
+        futures["news_finnhub"] = pool.submit(self.get_news_finnhub, symbol)
+        futures["finnhub_sentiment"] = pool.submit(self.get_sentiment_finnhub, symbol)
+    # All calls run simultaneously → ~3s instead of 18s
 ```
+
+**Enhanced Fundamentals (50+ Data Points):**
+
+`get_fundamentals()` now returns a comprehensive dataset organized into categories:
+
+| Category | Metrics |
+|----------|--------|
+| **Company Info** | Name, sector, industry, website, HQ, employees, description |
+| **Valuation** | P/E, Forward P/E, PEG, P/B, P/S |
+| **EPS & Revenue** | EPS TTM, Forward EPS, Revenue TTM, Gross Profit, EBITDA, Net Income |
+| **Shares & Float** | Outstanding, Float, Short Interest, Short Ratio, Short % of Float, Insider/Institutional % |
+| **Risk & Volatility** | Beta, 52-Week High/Low, 50-Day Avg, 200-Day Avg |
+| **Profitability** | Profit Margin, Operating Margin, Gross Margin, ROE, ROA |
+| **Growth** | Revenue Growth, Earnings Growth, Quarterly Revenue/Earnings Growth |
+| **Dividends** | Yield, Rate, Payout Ratio, Ex-Dividend Date |
+| **Financial Health** | Current Ratio, Quick Ratio, D/E, Total Cash, Total Debt, FCF, Operating CF |
+| **Analyst Data** | Target High/Low/Mean/Median, Recommendation, Analyst Count, Next Earnings Date |
 
 **Technical Indicator Calculations:**
 
@@ -275,7 +321,7 @@ The fetcher calculates all indicators from raw price data using standard financi
 - **RSI (Relative Strength Index):** Measures if a stock is overbought (>70) or oversold (<30). Uses Wilder's smoothing method.
 - **MACD (Moving Average Convergence Divergence):** Shows momentum by comparing fast vs. slow moving averages.
 - **Bollinger Bands:** Shows volatility — price touching upper band = potentially overbought.
-- **ATR (Average True Range):** Shows how much a stock typically moves in a day. Used for stop-loss calculations.
+- **ATR (Average True Range):** Shows how much a stock typically moves in a day. Used for stop-loss and position sizing.
 - **VWAP (Volume Weighted Average Price):** Institutional benchmark — price above VWAP = institutional buying.
 - **ADX (Average Directional Index):** Measures trend strength — ADX > 25 = strong trend.
 
@@ -324,23 +370,66 @@ def _call_llm(self, prompt, system_prompt, task="default"):
     raise Exception("All models failed")
 ```
 
+**Enhanced Intraday Analysis (`analyze_intraday`):**
+
+The intraday prompt now weaves together six distinct data layers — each answering a different question:
+
+| Data Layer | What It Tells the LLM | Source |
+|-----------|----------------------|--------|
+| Current Price | Where the stock is *right now* (price, change%, volume vs average) | `get_quote()` |
+| Technical Indicators | Whether technicals are bullish/bearish (RSI, MACD, SMA, Bollinger, etc.) | `calculate_indicators()` |
+| Recent News | External catalysts — earnings, partnerships, lawsuits, macro | `get_news_yahoo()` + `get_news_finnhub()` |
+| Social Sentiment | Community buzz — Reddit mentions, rank, overall sentiment | `get_social_sentiment()` |
+| RAG Context | How have *similar setups* played out historically? | `RAGRetriever.retrieve_context()` |
+| RAG Validation | Post-analysis check: is the output grounded? (grade A-F) | `RAGValidator.validate_analysis()` |
+
+After the LLM generates a signal, RAG Validation scores it for **faithfulness** (is it grounded in the data?), **context relevancy** (were the right docs retrieved?), **groundedness** (can claims be traced to sources?), and **temporal validity** (is the context fresh enough for intraday?).
+
+**Enhanced Long-term Analysis (`analyze_longterm`):**
+
+The longterm prompt is structured as a professional fundamental analysis covering seven sections:
+
+```
+1. CURRENT PRICE      → Price, 52-Week High/Low, Market Cap
+2. VALUATION METRICS   → P/E, Forward P/E, PEG Ratio, P/B, P/S
+3. PROFITABILITY       → Profit Margin, Operating Margin, ROE, ROA
+4. GROWTH              → Revenue Growth, Earnings Growth
+5. FINANCIAL HEALTH    → Current Ratio, D/E, Free Cash Flow
+6. DIVIDENDS           → Yield, Payout Ratio
+7. ANALYST CONSENSUS   → Mean Target Price, Recommendation
+8. TECHNICALS (Weekly) → RSI, Price vs SMA(50), SMA(200)
+9. NEWS + RAG CONTEXT  → Recent news + similar past analyses
+```
+
+The response is validated with the same RAG Validation pipeline, but with `analysis_mode="longterm"` which relaxes temporal freshness requirements (weekly data is acceptable for long-term context).
+
 **The Algo Prediction Pipeline (Hybrid AI + Math):**
 
 This is the most sophisticated part. It combines **pure mathematical scoring** with **ML predictions** and **LLM reasoning**:
 
-1. **StockScorer** runs formula-based calculations (no AI involved):
+1. **ML Model First (Primary):** The pipeline tries the ML model before formulas:
+   - **RegimeAwarePredictor:** Checks if regime-specific models exist (bull, bear, volatile) and routes accordingly
+   - Falls back to the general **SignalPredictor** if no regime models are found
+   - Passes OHLCV price series for Phase-5 factor & microstructure features
+   - Passes headline text + timestamps for Phase-6 FinBERT sentiment momentum scoring
+   - Passes Finnhub aggregate sentiment for external sentiment integration
+
+2. **StockScorer** (Fallback) runs formula-based calculations (no AI involved):
    - Momentum Score (0-100): Based on RSI, MACD, price vs SMA
    - Value Score (0-100): Based on P/E, P/B, dividend yield
    - Quality Score (0-100): Based on ROE, profit margins, debt/equity
    - Risk Score (1-10): Based on ATR volatility, ADX trend strength
+   - Returns per-indicator **score breakdowns** for full transparency
 
-2. **ML Model** (if trained and available): Runs the trained classifier for a signal prediction with probability distribution
+3. **Market Regime Classification**: Bull, bear, neutral, or volatile market?
 
-3. **Market Regime Classification**: Is we in a bull, bear, neutral, or volatile market?
+4. **Position Sizing**: Based on signal confidence, volatility, and regime. Automatically scaled down by per-trade risk budgeting if stop-loss risk exceeds 2% of portfolio.
 
-4. **Position Sizing**: Based on signal confidence, volatility, and regime, calculates how much to invest
+5. **Stop-Loss / Take-Profit**: Calculated from ATR at the top level with risk-reward ratios
 
-5. **LLM Reasoning**: Only used to *explain* the scores — never to *generate* them
+6. **Per-Trade Risk Budgeting**: If the calculated position combined with the stop-loss would risk more than 2% of portfolio value, the position size is automatically reduced
+
+7. **LLM Reasoning**: Only used to *explain* the scores — never to *generate* them
 
 ---
 
@@ -545,18 +634,25 @@ Loads a trained scikit-learn model (saved as `.joblib`) and predicts signals fro
 **Feature Vector (37+ features):**
 ```
 Base indicators:        RSI, MACD, SMA ratios, Bollinger position, etc.
-Factor features:        Fama-French style momentum, value, quality factors
-Microstructure features: Volume profile, bid-ask spread, order flow
-Sentiment features:     FinBERT scores on headlines, Finnhub sentiment
+Factor features:        Fama-French style momentum, value, quality factors (Phase-5)
+Microstructure features: Volume profile, bid-ask spread, order flow (Phase-5)
+Sentiment features:     FinBERT scores on headlines + timestamps,  (Phase-6)
+                        Finnhub aggregate sentiment                (Phase-6)
 ```
+
+The predictor auto-detects the expected feature count from model metadata, falling back to pipeline introspection of `n_features_in_`. This means a model trained with 20 base features and one trained with 37 enhanced features both work transparently — the predictor pads missing features with zeros.
 
 **How it integrates with the main pipeline:**
 ```
 Algo Prediction Pipeline:
-  ├─ Try ML Model first (trained data > formulas)
-  │   └─ RegimeAwarePredictor checks if regime-specific models exist
-  │   └─ Falls back to general SignalPredictor
-  ├─ If ML fails, use StockScorer formulas (always available)
+  ├─ Try RegimeAwarePredictor first
+  │   └─ Discovers regime-specific models (bull/bear/volatile)
+  │   └─ Routes to the right model based on current regime
+  ├─ Falls back to general SignalPredictor
+  │   └─ Passes OHLCV series → computes factor + microstructure features on-the-fly
+  │   └─ Passes headlines + timestamps → computes FinBERT sentiment on-the-fly
+  │   └─ Passes Finnhub sentiment → integrates external sentiment signal
+  ├─ If ML fails entirely, use StockScorer formulas (always available)
   └─ ML signal takes priority when available; formulas are the safety net
 ```
 
@@ -889,60 +985,72 @@ Here's what happens when a user enters "AAPL" in the dashboard, from click to al
        │
 3. StockRadar.analyze_stock("AAPL") is called
        │
-4. ┌── PARALLEL (ThreadPoolExecutor, 5 workers) ──────┐
-   │ get_quote("AAPL")          → StockQuote          │
-   │ get_price_history("AAPL")  → [PriceData × 500]   │
-   │ get_fundamentals("AAPL")   → {pe_ratio, roe, ...} │
-   │ get_news_yahoo("AAPL")     → [NewsItem × 10]      │
-   │ get_news_finnhub("AAPL")   → [NewsItem × 15]      │
-   └───────────────────────────────────────────────────┘
+4. _resolve_analysis_history_config("intraday", "5d") → period="5d", interval="15m"
        │
-5. calculate_indicators(price_history)
+5. ┌── PARALLEL (ThreadPoolExecutor, 5 workers) ────────────────┐
+   │ * Check WebSocket cache for instant quote (< 60s fresh)    │
+   │ get_quote("AAPL")            → StockQuote                 │
+   │ get_price_history("AAPL", "5d", "15m") → [PriceData × 960]│
+   │ get_fundamentals("AAPL")     → {50+ metrics: valuation,    │
+   │                                  profitability, growth,     │
+   │                                  health, dividends, ...}    │
+   │ get_news_yahoo("AAPL")       → [NewsItem × 10]             │
+   │ get_news_finnhub("AAPL")     → [NewsItem × 15]             │
+   │ get_sentiment_finnhub("AAPL")→ {bullish:30, bearish:5, ...}│
+   └─────────────────────────────────────────────────────────────┘
+       │
+6. calculate_indicators(price_history)
    → RSI=62, MACD=15.5, SMA20=2800, BB_upper=2900, ATR=45
        │
-6. get_social_sentiment("AAPL")
+7. get_social_sentiment("AAPL")
    → {reddit_mentions: 342, rank: #5, sentiment: "bullish"}
        │
-7. analyzer.analyze_intraday(symbol, quote, indicators, news, social)
+8. analyzer.analyze_intraday(symbol, quote, indicators, news, social)
    │
-   ├── 7a. _get_rag_context() → Find similar past analyses
-   ├── 7b. Build prompt with all data + RAG context
-   ├── 7c. _call_llm(prompt, task="analysis")
+   ├── 8a. _get_rag_context() → Find similar past analyses, signals, news
+   ├── 8b. Build prompt: price + technicals + news + social + RAG context
+   ├── 8c. _call_llm(prompt, task="analysis")
    │        Try: groq/llama-3.1-70b → ✓ Success in 1.2s
-   ├── 7d. Parse JSON response → Signal=BUY, Confidence=0.75
-   └── 7e. RAG Validation → Faithfulness=0.85, Grade=B+
+   ├── 8d. Parse JSON → Signal=BUY, Confidence=0.75
+   └── 8e. RAG Validation → Faithfulness=0.85, Grade=B+, Temporal=✓
        │
-8. generate_algo_prediction(symbol, quote, indicators, ...)
+9. generate_algo_prediction(symbol, quote, indicators, fundamentals,
+   │                         news, price_history, finnhub_sentiment)
    │
-   ├── 8a. ML Model → predict(features) → signal=buy, confidence=0.72
-   ├── 8b. StockScorer → M=65, V=55, Q=70, R=4
-   ├── 8c. classify_market_regime → "neutral" (confidence: 0.6)
-   ├── 8d. calculate_position_size → 2.5% of portfolio
-   └── 8e. calculate_stop_take_profit → SL=$178.50, TP=$195.00
+   ├── 9a. RegimeAwarePredictor → route to regime-specific model
+   │        └─ predict(indicators + OHLCV series + headlines + timestamps
+   │                   + finnhub_sentiment)  [37+ features]
+   │        └─ signal=buy, confidence=0.72
+   ├── 9b. StockScorer → M=65, V=55, Q=70, R=4
+   │        └─ Returns score_breakdowns for each indicator's contribution
+   ├── 9c. classify_market_regime → "neutral" (confidence: 0.6)
+   ├── 9d. calculate_position_size → 2.5% of portfolio
+   ├── 9e. calculate_stop_take_profit (ATR-based) → SL=$178.50, TP=$195.00
+   └── 9f. per_trade_risk_budgeting → risk=1.8% ✓ within 2% limit
        │
-9. PAPER TRADING (if enabled)
-   │
-   ├── 9a. Kill switch check → All clear
-   ├── 9b. Canary check → Symbol allowed
-   ├── 9c. Pre-trade risk → Within limits
-   ├── 9d. PaperBroker.submit_order() → Fill confirmed
-   └── 9e. Audit trail → Signal logged
+10. PAPER TRADING (if enabled)
+    │
+    ├── 10a. Kill switch check → All clear
+    ├── 10b. Canary check → Symbol allowed
+    ├── 10c. Pre-trade risk → Within limits
+    ├── 10d. PaperBroker.submit_order() → Fill confirmed
+    └── 10e. Audit trail → Signal logged
        │
-10. storage.store_analysis_with_embedding(...)
+11. storage.store_analysis_with_embedding(...)
     → Record saved + Cohere embedding generated
        │
-11. storage.store_signal(...)
+12. storage.store_signal(...)
     → Actionable signal stored for tracking
        │
-12. notifications.send_analysis_alert(...)
+13. notifications.send_analysis_alert(...)
     │
     ├── Slack: Rich block message sent ✓
     └── Telegram: HTML message sent ✓
        │
-13. Frontend polls GET /v1/analyze/{job_id}
-    → Returns complete result with signal, scores, reasoning
+14. Frontend polls GET /v1/analyze/{job_id}
+    → Returns complete result with signal, scores, breakdowns, reasoning
        │
-14. Dashboard renders: BUY signal, 75% confidence, charts, news
+15. Dashboard renders: BUY signal, 75% confidence, charts, news, score breakdowns
 ```
 
 ---

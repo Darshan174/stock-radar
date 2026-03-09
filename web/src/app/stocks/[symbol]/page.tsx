@@ -238,20 +238,6 @@ export default function StockDetailPage() {
     }
   }, [fetchStockInfo, symbol])
 
-  useEffect(() => {
-    if (!stock) return
-
-    const hasSelectedModeAnalysis = stock.analyses.some((analysis) => analysis.mode === selectedMode)
-    if (hasSelectedModeAnalysis || stock.analyses.length === 0) {
-      return
-    }
-
-    const fallbackMode = stock.analyses.some((analysis) => analysis.mode === "intraday")
-      ? "intraday"
-      : "longterm"
-    setSelectedMode(fallbackMode)
-  }, [selectedMode, stock])
-
   // Fetch chart data from Yahoo Finance (independent of analysis)
   useEffect(() => {
     async function fetchChartData(options?: { background?: boolean }) {

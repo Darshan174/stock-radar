@@ -297,8 +297,8 @@ function TableOfContents({ activeId }: { activeId: string }) {
                                 }
                             }}
                             className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all duration-200 ${isActive
-                                    ? "bg-green-500/10 text-green-400 font-medium"
-                                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                                ? "bg-green-500/10 text-green-400 font-medium"
+                                : "text-muted-foreground hover:bg-muted hover:text-foreground"
                                 }`}
                         >
                             <Icon className="h-4 w-4 shrink-0" />
@@ -318,8 +318,8 @@ function TableOfContents({ activeId }: { activeId: string }) {
                                         key={child.id}
                                         href={`#${child.id}`}
                                         className={`block rounded-md px-2.5 py-1.5 text-xs transition-colors ${activeId === child.id
-                                                ? "text-green-400 font-medium"
-                                                : "text-muted-foreground hover:text-foreground"
+                                            ? "text-green-400 font-medium"
+                                            : "text-muted-foreground hover:text-foreground"
                                             }`}
                                     >
                                         {child.label}
@@ -549,19 +549,19 @@ export default function DocsPage() {
                                 {
                                     step: "1",
                                     title: "FETCH",
-                                    desc: "5 API calls in parallel via ThreadPoolExecutor: quote, history, fundamentals, Yahoo news, Finnhub news. Then calculates RSI, MACD, Bollinger Bands, ATR, VWAP, ADX.",
+                                    desc: "Mode-aware history resolution (intraday → 5d/15m bars, longterm → 5y/weekly bars). Up to 6 API calls in parallel via ThreadPoolExecutor: quote, history, fundamentals, Yahoo news, Finnhub news, Finnhub sentiment. Checks WebSocket cache for instant quotes. Then calculates RSI, MACD, Bollinger Bands, ATR, VWAP, ADX. Also fetches Reddit social sentiment.",
                                     color: "text-blue-400",
                                 },
                                 {
                                     step: "2",
                                     title: "ANALYZE",
-                                    desc: "Builds a structured prompt with all data. Calls the LLM with fallback chain (Groq → Z.AI → Gemini). Parses JSON response into a Signal. Optionally retrieves RAG context.",
+                                    desc: "Retrieves RAG context (similar past analyses, signals, news by vector similarity). Builds a structured prompt — intraday includes social sentiment & real-time buzz; longterm includes 50+ fundamentals (valuation, profitability, growth, health, dividends, analyst consensus). Calls the LLM with fallback chain. RAG Validation grades the output (A-F) on faithfulness, relevancy, groundedness & temporal validity.",
                                     color: "text-purple-400",
                                 },
                                 {
                                     step: "3",
-                                    title: "VERIFY",
-                                    desc: "A second LLM call cross-checks the analysis. Then runs StockScorer (pure math), ML model (if available), market regime classification, position sizing, and stop-loss levels.",
+                                    title: "VERIFY + ALGO",
+                                    desc: "A second LLM cross-checks the analysis. Then algo prediction: tries RegimeAwarePredictor → SignalPredictor (37+ features incl. Phase-5 factors, Phase-6 FinBERT sentiment, Finnhub sentiment). Falls back to StockScorer formulas. Classifies market regime, sizes positions, computes ATR-based stop-loss/take-profit, auto-scales via per-trade risk budgeting (2% max). Returns full score breakdowns.",
                                     color: "text-amber-400",
                                 },
                                 {
@@ -596,7 +596,7 @@ export default function DocsPage() {
                     {/* 4.1 Fetcher */}
                     <SubSection id="fetcher" title="StockFetcher — The Data Collector">
                         <p className="text-muted-foreground text-sm mb-4">
-                            <code className="text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded text-xs">src/agents/fetcher.py</code> (1,196 lines)
+                            <code className="text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded text-xs">src/agents/fetcher.py</code> (1,221 lines)
                             — The researcher who gathers all raw information and brings it back organized.
                         </p>
                         <DataTable
@@ -604,30 +604,64 @@ export default function DocsPage() {
                             rows={[
                                 ["Live Quotes", "Twelve Data", "Yahoo Finance", "REST API"],
                                 ["Price History", "Twelve Data", "Yahoo Finance", "REST API"],
-                                ["Fundamentals", "Yahoo Finance", "—", "REST API"],
+                                ["Fundamentals (50+)", "Yahoo Finance", "—", "REST API"],
                                 ["News", "Yahoo + Finnhub", "Yahoo alone", "REST API"],
-                                ["Social Sentiment", "Finnhub", "—", "REST API"],
+                                ["Aggregate Sentiment", "Finnhub", "—", "REST API"],
                                 ["Reddit Buzz", "ApeWisdom", "—", "REST API (free)"],
                             ]}
                         />
+                        <h4 className="font-medium text-foreground text-sm mt-6 mb-2">Mode-Aware History Resolution</h4>
+                        <p className="text-sm text-muted-foreground mb-2">
+                            The fetcher tailors the history window and bar size to the analysis mode via
+                            <code className="text-green-400 bg-green-500/10 px-1 rounded text-xs"> _resolve_analysis_history_config(mode, period)</code>:
+                        </p>
+                        <DataTable
+                            headers={["Mode", "Period", "Window", "Bar Size", "Why"]}
+                            rows={[
+                                ["Intraday", "1d", "1 day", "5-min bars", "Micro price action for day trading"],
+                                ["Intraday", "5d (default)", "5 days", "15-min bars", "Multi-day patterns without noise"],
+                                ["Longterm", "5y (default)", "5 years", "Weekly bars", "Secular trends and cycles"],
+                                ["Longterm", "max", "Max available", "Weekly bars", "Full company history"],
+                            ]}
+                        />
                         <p className="text-sm text-muted-foreground mt-4 mb-2">
-                            <strong className="text-foreground">The Parallel Fetching Pattern:</strong> Instead of calling 5 APIs sequentially
-                            (5 × 3s = 15s), all calls run simultaneously via <code className="text-green-400 bg-green-500/10 px-1 rounded text-xs">ThreadPoolExecutor</code>.
-                            Total time ≈ max(single call) ≈ 3 seconds.
+                            <strong className="text-foreground">The Parallel Fetching Pattern:</strong> Up to 6 API calls run simultaneously.
+                            WebSocket cache skips the quote call when fresh data ({'<'}60s) is available:
                         </p>
                         <CodeBlock code={`with ThreadPoolExecutor(max_workers=5) as pool:
-    futures = {
-        "quote":     pool.submit(self.get_quote, symbol),
-        "history":   pool.submit(self.get_price_history, symbol, period),
-        "fundamentals": pool.submit(self.get_fundamentals, symbol),
-        "news_yahoo":   pool.submit(self.get_news_yahoo, symbol),
-        "news_finnhub": pool.submit(self.get_news_finnhub, symbol),
-    }
-    # All 5 calls run simultaneously → 3s instead of 15s`} />
+    futures = {}
+    if not rt_quote:  # Skip if WebSocket cache has fresh data
+        futures["quote"] = pool.submit(self.get_quote, symbol)
+    futures["history"] = pool.submit(
+        self.get_price_history, symbol, period, interval)
+    futures["fundamentals"] = pool.submit(self.get_fundamentals, symbol)
+    futures["news_yahoo"] = pool.submit(self.get_news_yahoo, symbol)
+    if self.finnhub_key:
+        futures["news_finnhub"] = pool.submit(
+            self.get_news_finnhub, symbol)
+        futures["finnhub_sentiment"] = pool.submit(
+            self.get_sentiment_finnhub, symbol)
+    # All calls run simultaneously → ~3s instead of 18s`} />
+                        <h4 className="font-medium text-foreground text-sm mt-6 mb-2">Enhanced Fundamentals (50+ Data Points)</h4>
+                        <DataTable
+                            headers={["Category", "Metrics"]}
+                            rows={[
+                                ["Company Info", "Name, sector, industry, website, HQ, employees, description"],
+                                ["Valuation", "P/E, Forward P/E, PEG, P/B, P/S"],
+                                ["EPS & Revenue", "EPS TTM, Forward EPS, Revenue, Gross Profit, EBITDA, Net Income"],
+                                ["Shares & Float", "Outstanding, Float, Short Interest, Short Ratio, Insider/Institutional %"],
+                                ["Risk & Volatility", "Beta, 52-Week High/Low, 50-Day Avg, 200-Day Avg"],
+                                ["Profitability", "Profit/Operating/Gross Margin, ROE, ROA"],
+                                ["Growth", "Revenue Growth, Earnings Growth, Quarterly Growth"],
+                                ["Dividends", "Yield, Rate, Payout Ratio, Ex-Dividend Date"],
+                                ["Financial Health", "Current Ratio, Quick Ratio, D/E, Cash, Debt, FCF, Operating CF"],
+                                ["Analyst Data", "Target High/Low/Mean/Median, Recommendation, Analyst Count"],
+                            ]}
+                        />
                         <p className="text-sm text-muted-foreground mt-3">
                             <strong className="text-foreground">Technical Indicators</strong> are calculated from raw price data
                             using standard financial math — no external libraries. RSI (overbought/oversold), MACD (momentum),
-                            Bollinger Bands (volatility), ATR (risk sizing), VWAP (institutional benchmark), ADX (trend strength).
+                            Bollinger Bands (volatility), ATR (risk sizing & position scaling), VWAP (institutional benchmark), ADX (trend strength).
                         </p>
                     </SubSection>
 
@@ -648,9 +682,48 @@ export default function DocsPage() {
                                 ["chat", "Groq Llama 70B", "Z.AI GLM-4.7", "Gemini Flash"],
                             ]}
                         />
-                        <p className="text-sm text-muted-foreground mt-2">
+                        <p className="text-sm text-muted-foreground mt-2 mb-6">
                             <strong className="text-foreground">Why different models?</strong> News summarization doesn&apos;t need a 70B model — a faster 8B
                             gives the same quality at 5× the speed. Stock analysis needs deeper reasoning, so we use the larger model.
+                        </p>
+
+                        <h4 className="font-medium text-foreground text-sm mb-2">Enhanced Intraday Analysis</h4>
+                        <p className="text-sm text-muted-foreground mb-2">
+                            The intraday prompt weaves together six distinct data layers:
+                        </p>
+                        <DataTable
+                            headers={["Data Layer", "What It Tells the LLM", "Source"]}
+                            rows={[
+                                ["Current Price", "Where the stock is right now (price, change%, volume vs avg)", "get_quote()"],
+                                ["Technical Indicators", "Bullish/bearish technicals (RSI, MACD, SMA, Bollinger)", "calculate_indicators()"],
+                                ["Recent News", "External catalysts — earnings, partnerships, macro", "get_news_yahoo() + get_news_finnhub()"],
+                                ["Social Sentiment", "Reddit mentions, rank, overall community buzz", "get_social_sentiment()"],
+                                ["RAG Context", "How have similar setups played out historically?", "RAGRetriever.retrieve_context()"],
+                                ["RAG Validation", "Post-analysis grading: faithfulness, groundedness (A-F)", "RAGValidator.validate_analysis()"],
+                            ]}
+                        />
+
+                        <h4 className="font-medium text-foreground text-sm mt-6 mb-2">Enhanced Long-term Analysis</h4>
+                        <p className="text-sm text-muted-foreground mb-2">
+                            The longterm prompt is structured as a professional fundamental analysis with nine sections:
+                        </p>
+                        <DataTable
+                            headers={["Section", "Data Included"]}
+                            rows={[
+                                ["1. Current Price", "Price, 52-Week High/Low, Market Cap"],
+                                ["2. Valuation", "P/E, Forward P/E, PEG, P/B, P/S"],
+                                ["3. Profitability", "Profit Margin, Operating Margin, ROE, ROA"],
+                                ["4. Growth", "Revenue Growth, Earnings Growth"],
+                                ["5. Financial Health", "Current Ratio, D/E, Free Cash Flow"],
+                                ["6. Dividends", "Yield, Payout Ratio"],
+                                ["7. Analyst Consensus", "Mean Target Price, Recommendation"],
+                                ["8. Technicals (Weekly)", "RSI, Price vs SMA(50), SMA(200)"],
+                                ["9. RAG Context", "Recent news + similar past analyses"],
+                            ]}
+                        />
+                        <p className="text-sm text-muted-foreground mt-2">
+                            Both modes run RAG Validation post-analysis. Longterm mode uses <code className="text-green-400 text-xs">analysis_mode=&quot;longterm&quot;</code> which
+                            relaxes temporal freshness requirements — weekly data is acceptable for long-term context.
                         </p>
                     </SubSection>
 
@@ -759,10 +832,15 @@ export default function DocsPage() {
                 {/* ═══ 5. ML ═══ */}
                 <Section id="ml" title="ML & Training Subsystem" icon={Brain}>
                     <SubSection id="predictor" title="SignalPredictor — The ML Model">
-                        <p className="text-muted-foreground text-sm mb-4">
+                        <p className="text-muted-foreground text-sm mb-2">
                             Loads a trained scikit-learn model (<code className="text-green-400 text-xs">.joblib</code>)
                             and predicts signals from a 37+ feature vector including technical indicators,
-                            factor features, microstructure data, and FinBERT sentiment scores.
+                            Phase-5 factor/microstructure features, and Phase-6 FinBERT sentiment + Finnhub aggregate sentiment.
+                        </p>
+                        <p className="text-sm text-muted-foreground mb-4">
+                            <strong className="text-foreground">Regime-Aware Routing:</strong> Tries <code className="text-green-400 text-xs">RegimeAwarePredictor</code> first
+                            (discovers bull/bear/volatile regime-specific models), then falls back to the general <code className="text-green-400 text-xs">SignalPredictor</code>.
+                            The predictor auto-detects feature count from model metadata — models trained with 20 or 37 features both work transparently.
                         </p>
                     </SubSection>
 
@@ -920,30 +998,38 @@ export default function DocsPage() {
                         code={`1. Frontend → POST /v1/analyze {symbol: "AAPL", mode: "intraday"}
 2. Backend creates background job, returns job_id
 3. StockRadar.analyze_stock("AAPL") called
-4. PARALLEL FETCH (5 workers):
+4. _resolve_analysis_history_config("intraday") → 5d, 15m bars
+5. PARALLEL FETCH (up to 6 workers):
+   • WebSocket cache check → instant if < 60s fresh
    • get_quote → StockQuote
-   • get_price_history → [PriceData × 500]
-   • get_fundamentals → {pe_ratio, roe, ...}
+   • get_price_history("5d","15m") → [PriceData × 960]
+   • get_fundamentals → {50+ metrics: valuation, growth, ...}
    • get_news_yahoo → [NewsItem × 10]
    • get_news_finnhub → [NewsItem × 15]
-5. calculate_indicators → RSI=62, MACD=15.5, SMA20=2800
-6. get_social_sentiment → {reddit_mentions: 342}
-7. analyzer.analyze_intraday():
-   a. RAG context retrieval
-   b. Build prompt with all data
+   • get_sentiment_finnhub → {bullish:30, bearish:5, ...}
+6. calculate_indicators → RSI=62, MACD=15.5, SMA20=2800
+7. get_social_sentiment → {reddit_mentions: 342}
+8. analyzer.analyze_intraday():
+   a. RAG context: past analyses + signals + news (vector similarity)
+   b. Build prompt: price + technicals + news + social + RAG
    c. LLM call: Groq Llama 70B → ✓ 1.2s
    d. Parse JSON → Signal=BUY, Confidence=0.75
-   e. RAG Validation → Grade=B+
-8. generate_algo_prediction():
-   a. ML Model → signal=buy, confidence=0.72
+   e. RAG Validation → Faithfulness=0.85, Grade=B+, Temporal=✓
+9. generate_algo_prediction():
+   a. RegimeAwarePredictor → regime-specific model
+      predict(indicators + OHLCV + headlines + timestamps
+              + finnhub_sentiment) [37+ features]
+      → signal=buy, confidence=0.72
    b. StockScorer → M=65, V=55, Q=70, R=4
-   c. Market regime → "neutral"
+      (with per-indicator score_breakdowns)
+   c. Market regime → "neutral" (confidence=0.6)
    d. Position size → 2.5% of portfolio
-   e. Stop/Take → SL=$178.50, TP=$195.00
-9. Paper trading (kill switch → canary → risk → order)
-10. Storage: analysis + embedding saved to Supabase
-11. Alerts: Slack + Telegram notifications sent
-12. Frontend polls job → renders dashboard`}
+   e. Stop/Take (ATR) → SL=$178.50, TP=$195.00
+   f. Per-trade risk → 1.8% ✓ within 2% limit
+10. Paper trading (kill switch → canary → risk → order)
+11. Storage: analysis + embedding saved to Supabase
+12. Alerts: Slack + Telegram notifications sent
+13. Frontend polls job → renders signal, scores, breakdowns`}
                     />
                 </Section>
 
