@@ -1,5 +1,5 @@
 # Stock-Radar
-Link: https://stock-radar-9t24-g1nmffqdl-darshans-projects-84a52e39.vercel.app/
+Link: https://stock-radar-9t24-ppcrvodu4-darshans-projects-84a52e39.vercel.app/
 
 Pay-per-use financial intelligence APIs with blockchain-native payments, async AI analysis jobs, and an operator-ready dashboard.
 
@@ -37,13 +37,6 @@ flowchart LR
 - `move-agent-registry/`: Move contracts for agent registry/reputation
 - `demo-client/`: CLI demo for payment flow
 - `docs/deploy-vercel-railway.md`: Production deployment runbook
-
-## DevRel Learning Track
-- `docs/devrel/README.md`: entrypoint for the 2-week DevRel curriculum
-- `docs/devrel/2-week-curriculum.md`: day-by-day guided execution plan
-- `docs/devrel/workshop-pack.md`: slide/demo/FAQ/troubleshooting templates
-- `scripts/devrel_validate.sh`: daily validation runner (`quick` or `full`)
-- `scripts/devrel_api_flow.sh`: async analyze job submit + poll smoke flow
 
 ## Quick Start (Local)
 ### 1. Prerequisites
