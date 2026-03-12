@@ -900,19 +900,12 @@ export default function DocsPage() {
                         </p>
                     </SubSection>
 
-                    <SubSection id="caching" title="Caching Layer">
-                        <DataTable
-                            headers={["Data Type", "TTL", "Key Pattern"]}
-                            rows={[
-                                ["Quotes", "60s", "quote:{symbol}"],
-                                ["Fundamentals", "1 hour", "fundamentals:{symbol}"],
-                                ["Analysis", "15 min", "analysis:{symbol}:{mode}:{prompt}"],
-                                ["Embeddings", "24 hours", "embedding:{hash(text)}"],
-                                ["Indicators", "5 min", "indicators:{symbol}"],
-                            ]}
-                        />
+                    <SubSection id="caching" title="Caching Strategy">
                         <p className="text-sm text-muted-foreground">
-                            Redis in production, in-memory dict in development. All hits/misses tracked as Prometheus metrics.
+                            The standalone <code className="text-green-400 text-xs">cache.py</code> module was removed.
+                            Caching is now handled at the application level — Supabase handles data persistence,
+                            the frontend uses React state for quote snapshots, and the usage tracker manages its own counters.
+                            Cache-related Prometheus counters (<code className="text-green-400 text-xs">CACHE_HITS</code>, <code className="text-green-400 text-xs">CACHE_MISSES</code>) still exist in <code className="text-green-400 text-xs">metrics.py</code> for future use.
                         </p>
                     </SubSection>
 
@@ -942,16 +935,27 @@ export default function DocsPage() {
                     </SubSection>
 
                     <SubSection id="metrics-infra" title="Prometheus Metrics">
+                        <p className="text-sm text-muted-foreground mb-3">
+                            Served natively at <code className="text-green-400 text-xs">GET /metrics</code> in the FastAPI backend (<code className="text-green-400 text-xs">backend/app.py:143</code>).
+                            The standalone metrics server is disabled in the backend via <code className="text-green-400 text-xs">STOCK_RADAR_DISABLE_METRICS_SERVER=1</code> —
+                            it only runs in CLI mode.
+                        </p>
                         <DataTable
                             headers={["Metric", "What It Measures"]}
                             rows={[
                                 ["llm_latency_seconds", "How long each LLM call takes"],
                                 ["llm_requests_total", "Total LLM calls by model & status"],
                                 ["llm_fallback_total", "How often fallback models trigger"],
+                                ["llm_tokens_total", "Token consumption (input/output by model)"],
                                 ["analysis_confidence", "Distribution of confidence scores"],
-                                ["api_cost_usd_total", "Running cost in USD"],
-                                ["cache_hits_total", "Cache effectiveness"],
+                                ["analysis_signal_total", "Count of each signal type by mode"],
+                                ["analysis_duration_seconds", "Total pipeline duration by mode"],
+                                ["api_cost_usd_total", "Running cost in USD by provider"],
+                                ["data_fetch_latency_seconds", "Data provider fetch latency"],
+                                ["scoring_composite", "Distribution of composite algo scores"],
                                 ["guardrail_triggers_total", "How often guardrails fire"],
+                                ["system_up", "Whether the system is running (lifecycle gauge)"],
+                                ["ml_model_loaded", "Whether an ML model is loaded"],
                             ]}
                         />
                     </SubSection>
@@ -969,22 +973,24 @@ export default function DocsPage() {
                     <DataTable
                         headers={["Endpoint", "Method", "Description"]}
                         rows={[
-                            ["/v1/analyze", "POST", "Start async analysis job"],
-                            ["/v1/analyze/{job_id}", "GET", "Check analysis job status"],
-                            ["/v1/ask", "POST", "Chat assistant Q&A"],
+                            ["/v1/analyze/jobs", "POST", "Start async analysis job (returns job ID)"],
+                            ["/v1/analyze/jobs/{job_id}", "GET", "Check analysis job status"],
+                            ["/v1/ask", "POST", "Chat assistant Q&A (with session history)"],
                             ["/v1/fundamentals", "GET", "Stock fundamentals"],
-                            ["/v1/agent/momentum", "GET", "Momentum analysis"],
+                            ["/v1/agent/momentum", "GET", "Momentum analysis with score breakdown"],
                             ["/v1/agent/rsi-divergence", "GET", "RSI divergence detection"],
                             ["/v1/agent/social-sentiment", "GET", "Reddit/social buzz"],
-                            ["/v1/agent/support-resistance", "GET", "Key price levels"],
-                            ["/v1/agent/stock-score", "GET", "Algorithmic scores"],
-                            ["/v1/agent/news-impact", "GET", "News sentiment analysis"],
-                            ["/v1/health", "GET", "System health check"],
+                            ["/v1/agent/support-resistance", "GET", "Pivot points + Bollinger + ATR"],
+                            ["/v1/agent/stock-score", "GET", "Full algorithmic scores"],
+                            ["/v1/agent/news-impact", "GET", "News sentiment with sector context"],
+                            ["/metrics", "GET", "Prometheus metrics (FastAPI-native, no auth)"],
+                            ["/health", "GET", "System health check with dependency status"],
                         ]}
                     />
                     <p className="text-sm text-muted-foreground mt-2">
-                        Auth via Bearer token (<code className="text-green-400 text-xs">BACKEND_AUTH_TOKEN</code>).
-                        Long-running analyses execute in background thread pools; frontend polls for status.
+                        Auth via Bearer token (<code className="text-green-400 text-xs">BACKEND_AUTH_TOKEN</code>) on all <code className="text-green-400 text-xs">/v1/</code> routes.
+                        Long-running analyses execute in background thread pools (max_workers=2, 30-min TTL).
+                        Analysis payloads now include a <code className="text-green-400 text-xs">guardrails</code> key with pass/fail status and issue details.
                     </p>
                 </Section>
 

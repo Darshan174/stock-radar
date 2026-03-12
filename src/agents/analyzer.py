@@ -17,6 +17,15 @@ from litellm import completion
 
 from agents.usage_tracker import get_tracker
 from agents.scorer import StockScorer
+from guardrails import GuardrailEngine
+from metrics import (
+    ANALYSIS_CONFIDENCE,
+    ANALYSIS_SIGNAL,
+    LLM_FALLBACK,
+    ML_MODEL_LOADED,
+    SCORING_DISTRIBUTION,
+)
+from token_accounting import TokenAccountant
 
 # Config (optional)
 try:
@@ -84,6 +93,10 @@ class AnalysisResult:
     algo_prediction: Optional[Dict] = None
     # RAG validation scores
     rag_validation: Optional[Dict] = None
+    # Guardrail output
+    guardrail_result: Optional[Dict] = None
+    # Per-request token/cost metadata
+    llm_meta: Optional[Dict] = None
 
 
 @dataclass
@@ -198,6 +211,7 @@ class StockAnalyzer:
         self.enable_rag = enable_rag and RAG_AVAILABLE
         self.rag_retriever = None
         self.rag_validator = None
+        self.guardrail_engine: GuardrailEngine | None = None
         if self.enable_rag:
             try:
                 self.rag_retriever = RAGRetriever()
@@ -207,11 +221,27 @@ class StockAnalyzer:
                 logger.warning(f"Failed to initialize RAG components: {e}")
                 self.enable_rag = False
 
+        guardrails_enabled = getattr(_cfg, "guardrails_enabled", True) if _cfg else True
+        if guardrails_enabled:
+            self.guardrail_engine = GuardrailEngine(
+                max_confidence=getattr(_cfg, "guardrails_max_confidence", 0.95) if _cfg else 0.95,
+                require_reasoning=getattr(_cfg, "guardrails_require_reasoning", True) if _cfg else True,
+            )
+
+        ml_model_loaded = (
+            ML_AVAILABLE
+            and bool(getattr(_cfg, "ml_model_enabled", True))
+            and bool(getattr(_cfg, "ml_model_path", None))
+            and os.path.exists(getattr(_cfg, "ml_model_path", ""))
+        )
+        ML_MODEL_LOADED.set(1 if ml_model_loaded else 0)
+
         logger.info(
-            "StockAnalyzer initialized with models=%s task_routes=%s RAG=%s",
+            "StockAnalyzer initialized with models=%s task_routes=%s RAG=%s guardrails=%s",
             self.available_models,
             sorted(self.task_routes.keys()),
             self.enable_rag,
+            bool(self.guardrail_engine),
         )
 
     def _model_is_available(self, model: str) -> bool:
@@ -247,6 +277,7 @@ class StockAnalyzer:
         prompt: str,
         system_prompt: str = "",
         task: str = "default",
+        accountant: Optional[TokenAccountant] = None,
     ) -> tuple[str, str, int]:
         """
         Call LLM with fallback chain.
@@ -269,7 +300,9 @@ class StockAnalyzer:
             raise Exception("No available LLM providers configured for requested task.")
 
         last_error = None
+        failed_models: list[str] = []
         for model in models:
+            started_at = time.time()
             try:
                 logger.info(f"Trying model for task={task}: {model}")
 
@@ -290,36 +323,128 @@ class StockAnalyzer:
 
                 content = response.choices[0].message.content
 
-                # Extract tokens with multiple fallback methods
-                tokens = 0
-                if hasattr(response, 'usage') and response.usage:
-                    usage = response.usage
-                    if hasattr(usage, 'total_tokens') and usage.total_tokens:
-                        tokens = usage.total_tokens
-                    elif hasattr(usage, 'prompt_tokens') and hasattr(usage, 'completion_tokens'):
-                        prompt_tokens = usage.prompt_tokens or 0
-                        completion_tokens = usage.completion_tokens or 0
-                        tokens = prompt_tokens + completion_tokens
-                    elif isinstance(usage, dict):
-                        tokens = usage.get('total_tokens', 0) or (
-                            usage.get('prompt_tokens', 0) + usage.get('completion_tokens', 0)
-                        )
-
-                    logger.debug(f"Token usage details: {usage}")
+                prompt_tokens, completion_tokens, tokens = self._extract_usage_counts(response)
+                logger.debug(
+                    "Token usage task=%s model=%s prompt=%s completion=%s total=%s",
+                    task,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    tokens,
+                )
 
                 # Track usage
                 service = "zai" if model.startswith("openai/glm") else model.split("/")[0]
                 get_tracker().track(service, count=1, tokens=tokens)
+                if accountant:
+                    accountant.record_llm_call(
+                        model=model,
+                        tokens_in=prompt_tokens,
+                        tokens_out=completion_tokens,
+                        latency_sec=time.time() - started_at,
+                    )
+                if failed_models:
+                    LLM_FALLBACK.labels(from_model=failed_models[-1], to_model=model).inc()
 
                 logger.info(f"Success with {model} ({tokens} tokens)")
                 return content, model, tokens
 
             except Exception as e:
                 last_error = e
+                failed_models.append(model)
+                if accountant:
+                    accountant.record_llm_error(model)
                 logger.warning(f"{model} failed: {e}")
                 continue
 
         raise Exception(f"All models failed. Last error: {last_error}")
+
+    @staticmethod
+    def _extract_usage_counts(response: Any) -> tuple[int, int, int]:
+        """Normalize usage metadata across LiteLLM provider responses."""
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+
+        if hasattr(response, "usage") and response.usage:
+            usage = response.usage
+            if isinstance(usage, dict):
+                prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+                completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+                total_tokens = int(usage.get("total_tokens", 0) or 0)
+            else:
+                prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+                completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+                total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
+
+        if total_tokens <= 0:
+            total_tokens = prompt_tokens + completion_tokens
+        if prompt_tokens == 0 and completion_tokens == 0 and total_tokens > 0:
+            # Some providers only return total_tokens.
+            prompt_tokens = total_tokens
+
+        return prompt_tokens, completion_tokens, total_tokens
+
+    def _apply_guardrails(
+        self,
+        analysis: Dict[str, Any],
+        current_price: float | None,
+        mode: str,
+    ) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        """Validate and adjust structured analysis output before returning it."""
+        if not self.guardrail_engine:
+            return analysis, None
+
+        result = self.guardrail_engine.validate(
+            llm_output=analysis,
+            current_price=current_price,
+            mode=mode,
+        )
+        if result.issues:
+            logger.info(
+                "Guardrails applied for mode=%s issues=%s passed=%s",
+                mode,
+                len(result.issues),
+                result.passed,
+            )
+
+        return result.adjusted, {
+            "passed": result.passed,
+            "error_count": result.error_count,
+            "warning_count": result.warning_count,
+            "issues": [
+                {
+                    "rule": issue.rule,
+                    "severity": issue.severity,
+                    "message": issue.message,
+                    "action": issue.action,
+                    "original_value": issue.original_value,
+                    "adjusted_value": issue.adjusted_value,
+                }
+                for issue in result.issues
+            ],
+        }
+
+    @staticmethod
+    def _normalize_signal(signal: str) -> Signal:
+        """Convert arbitrary signal text into a valid Signal enum."""
+        try:
+            return Signal(str(signal).lower())
+        except ValueError:
+            return Signal.HOLD
+
+    @staticmethod
+    def _normalize_confidence(confidence: Any, default: float = 0.5) -> float:
+        """Clamp confidence to the expected 0..1 range."""
+        try:
+            return max(0.0, min(1.0, float(confidence)))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _record_analysis_metrics(mode: str, signal: str, confidence: float) -> None:
+        ANALYSIS_CONFIDENCE.observe(confidence)
+        ANALYSIS_SIGNAL.labels(signal=signal, mode=mode).inc()
 
     def _extract_json(self, text: str) -> Optional[Dict]:
         """Extract JSON from LLM response."""
@@ -421,6 +546,8 @@ class StockAnalyzer:
             AnalysisResult with trading signal
         """
         start_time = time.time()
+        accountant = TokenAccountant()
+        accountant.set_mode("intraday")
 
         system_prompt = """You are an expert intraday stock trader and technical analyst.
 Analyze the provided stock data and give a clear trading signal.
@@ -502,13 +629,19 @@ Respond with JSON only:"""
 
         try:
             response_text, model_used, tokens = self._call_llm(
-                prompt, system_prompt, task="analysis"
+                prompt, system_prompt, task="analysis", accountant=accountant
             )
             analysis = self._extract_json(response_text)
 
             if not analysis:
                 logger.error("Failed to parse analysis JSON")
                 return None
+
+            analysis, guardrail_result = self._apply_guardrails(
+                analysis=analysis,
+                current_price=float(quote.get("price")) if quote.get("price") is not None else None,
+                mode="intraday",
+            )
 
             duration_ms = int((time.time() - start_time) * 1000)
             
@@ -528,11 +661,16 @@ Respond with JSON only:"""
                 except Exception as ve:
                     logger.warning(f"RAG validation failed: {ve}")
 
+            llm_meta = accountant.get_request_meta()
+            signal = self._normalize_signal(analysis.get("signal", "hold"))
+            confidence = self._normalize_confidence(analysis.get("confidence", 0.5))
+            self._record_analysis_metrics("intraday", signal.value, confidence)
+
             return AnalysisResult(
                 symbol=symbol,
                 mode=TradingMode.INTRADAY,
-                signal=Signal(analysis.get("signal", "hold")),
-                confidence=float(analysis.get("confidence", 0.5)),
+                signal=signal,
+                confidence=confidence,
                 reasoning=analysis.get("reasoning", ""),
                 technical_summary=analysis.get("technical_summary", ""),
                 sentiment_summary=analysis.get("sentiment_summary"),
@@ -545,7 +683,9 @@ Respond with JSON only:"""
                 tokens_used=tokens,
                 analysis_duration_ms=duration_ms,
                 created_at=datetime.now(timezone.utc).isoformat(),
-                rag_validation=rag_validation_result
+                rag_validation=rag_validation_result,
+                guardrail_result=guardrail_result,
+                llm_meta=llm_meta,
             )
 
         except Exception as e:
@@ -578,6 +718,8 @@ Respond with JSON only:"""
             AnalysisResult with investment signal
         """
         start_time = time.time()
+        accountant = TokenAccountant()
+        accountant.set_mode("longterm")
 
         system_prompt = """You are an expert long-term investor and fundamental analyst.
 Analyze the provided stock data and give a clear investment recommendation.
@@ -669,13 +811,19 @@ Respond with JSON only:"""
 
         try:
             response_text, model_used, tokens = self._call_llm(
-                prompt, system_prompt, task="analysis"
+                prompt, system_prompt, task="analysis", accountant=accountant
             )
             analysis = self._extract_json(response_text)
 
             if not analysis:
                 logger.error("Failed to parse analysis JSON")
                 return None
+
+            analysis, guardrail_result = self._apply_guardrails(
+                analysis=analysis,
+                current_price=float(quote.get("price")) if quote.get("price") is not None else None,
+                mode="longterm",
+            )
 
             duration_ms = int((time.time() - start_time) * 1000)
             
@@ -695,11 +843,16 @@ Respond with JSON only:"""
                 except Exception as ve:
                     logger.warning(f"RAG validation failed: {ve}")
 
+            llm_meta = accountant.get_request_meta()
+            signal = self._normalize_signal(analysis.get("signal", "hold"))
+            confidence = self._normalize_confidence(analysis.get("confidence", 0.5))
+            self._record_analysis_metrics("longterm", signal.value, confidence)
+
             return AnalysisResult(
                 symbol=symbol,
                 mode=TradingMode.LONGTERM,
-                signal=Signal(analysis.get("signal", "hold")),
-                confidence=float(analysis.get("confidence", 0.5)),
+                signal=signal,
+                confidence=confidence,
                 reasoning=analysis.get("reasoning", ""),
                 technical_summary=analysis.get("technical_summary", ""),
                 sentiment_summary=analysis.get("sentiment_summary"),
@@ -712,7 +865,9 @@ Respond with JSON only:"""
                 tokens_used=tokens,
                 analysis_duration_ms=duration_ms,
                 created_at=datetime.now(timezone.utc).isoformat(),
-                rag_validation=rag_validation_result
+                rag_validation=rag_validation_result,
+                guardrail_result=guardrail_result,
+                llm_meta=llm_meta,
             )
 
         except Exception as e:
@@ -763,7 +918,10 @@ Provide a brief, clear explanation (2-3 sentences) of the likely catalyst for th
 If the news doesn't explain it, mention possible reasons (sector movement, market sentiment, technical breakout, etc.)."""
 
         try:
-            response_text, _, _ = self._call_llm(prompt, task="news")
+            accountant = TokenAccountant()
+            accountant.set_mode("news")
+            response_text, _, _ = self._call_llm(prompt, task="news", accountant=accountant)
+            accountant.get_request_meta()
             return response_text.strip()
         except Exception as e:
             logger.error(f"Movement explanation failed: {e}")
@@ -821,7 +979,10 @@ Respond with JSON:
 }}"""
 
         try:
-            response_text, _, _ = self._call_llm(prompt, task="analysis")
+            accountant = TokenAccountant()
+            accountant.set_mode("verification")
+            response_text, _, _ = self._call_llm(prompt, task="analysis", accountant=accountant)
+            accountant.get_request_meta()
             result = self._extract_json(response_text)
             return result or {"is_valid": True, "confidence_adjustment": 0}
 
@@ -870,6 +1031,8 @@ Respond with JSON:
             Algo prediction with scores, predicted returns, and reasoning
         """
         start_time = time.time()
+        accountant = TokenAccountant()
+        accountant.set_mode("algo")
         from training.regime import classify_market_regime
         from training.risk import calculate_position_size
 
@@ -950,6 +1113,7 @@ Respond with JSON:
             price_history_days=price_history_days,
             has_news=bool(news)
         )
+        SCORING_DISTRIBUTION.observe(algo_scores.composite_score)
 
         logger.info(f"Formula scores for {symbol}: M={algo_scores.momentum_score}, V={algo_scores.value_score}, Q={algo_scores.quality_score}, R={algo_scores.risk_score}")
 
@@ -1002,9 +1166,10 @@ Respond with JSON only:"""
 
         try:
             response_text, model_used, tokens = self._call_llm(
-                prompt, system_prompt, task="algo"
+                prompt, system_prompt, task="algo", accountant=accountant
             )
             llm_response = self._extract_json(response_text)
+            llm_meta = accountant.get_request_meta()
             
             if not llm_response:
                 llm_response = {
@@ -1103,6 +1268,7 @@ Respond with JSON only:"""
                 "llm_model": model_used,
                 "tokens_used": tokens,
                 "analysis_duration_ms": int((time.time() - start_time) * 1000),
+                "llm_meta": llm_meta,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
             

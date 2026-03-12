@@ -1,3 +1,6 @@
+import fs from "node:fs"
+import path from "node:path"
+
 import { NextResponse } from "next/server"
 
 export class BackendProxyError extends Error {
@@ -13,14 +16,24 @@ export class BackendProxyError extends Error {
 }
 
 function backendConfig() {
-  const baseUrl = process.env.PY_BACKEND_URL
-  const apiKey = process.env.PY_BACKEND_API_KEY
+  const localFallback = loadLocalBackendFallback()
+  const isProduction = process.env.NODE_ENV === "production"
+
+  const baseUrl =
+    process.env.PY_BACKEND_URL ||
+    localFallback.PY_BACKEND_URL ||
+    (!isProduction ? "http://localhost:8000" : undefined)
+  const apiKey =
+    process.env.PY_BACKEND_API_KEY ||
+    localFallback.PY_BACKEND_API_KEY ||
+    process.env.BACKEND_API_KEY ||
+    localFallback.BACKEND_API_KEY
 
   if (!baseUrl || !apiKey) {
     throw new BackendProxyError(
       "Python backend is not configured",
       503,
-      "Set PY_BACKEND_URL and PY_BACKEND_API_KEY",
+      "Set PY_BACKEND_URL and PY_BACKEND_API_KEY, or define BACKEND_API_KEY in the repo root .env for local dev",
     )
   }
 
@@ -28,6 +41,60 @@ function backendConfig() {
     baseUrl: baseUrl.replace(/\/$/, ""),
     apiKey,
   }
+}
+
+type LocalBackendFallback = Partial<Record<"PY_BACKEND_URL" | "PY_BACKEND_API_KEY" | "BACKEND_API_KEY", string>>
+
+let cachedLocalFallback: LocalBackendFallback | null = null
+
+function loadLocalBackendFallback(): LocalBackendFallback {
+  if (cachedLocalFallback) {
+    return cachedLocalFallback
+  }
+
+  const cwd = process.cwd()
+  const envCandidates = [
+    path.resolve(cwd, ".env"),
+    path.resolve(cwd, "..", ".env"),
+  ]
+
+  for (const envPath of envCandidates) {
+    try {
+      if (!fs.existsSync(envPath)) continue
+      cachedLocalFallback = parseEnvFile(fs.readFileSync(envPath, "utf8"))
+      return cachedLocalFallback
+    } catch {
+      continue
+    }
+  }
+
+  cachedLocalFallback = {}
+  return cachedLocalFallback
+}
+
+function parseEnvFile(contents: string): LocalBackendFallback {
+  const parsed: LocalBackendFallback = {}
+
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith("#")) continue
+
+    const equalsIdx = line.indexOf("=")
+    if (equalsIdx <= 0) continue
+
+    const key = line.slice(0, equalsIdx).trim()
+    const value = line.slice(equalsIdx + 1).trim().replace(/^['"]|['"]$/g, "")
+
+    if (
+      key === "PY_BACKEND_URL" ||
+      key === "PY_BACKEND_API_KEY" ||
+      key === "BACKEND_API_KEY"
+    ) {
+      parsed[key] = value
+    }
+  }
+
+  return parsed
 }
 
 export interface BackendRequestOptions {

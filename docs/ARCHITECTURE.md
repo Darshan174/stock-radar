@@ -757,22 +757,11 @@ class Settings(BaseSettings):
 
 ---
 
-### 6.2 Caching Layer
+### 6.2 Caching Strategy
 
-**File:** `src/cache.py` (247 lines)
+> **Note:** The standalone `cache.py` module was removed. Caching is now handled at the application level — Supabase handles data persistence, the frontend uses SWR/React state for quote snapshots, and the usage tracker manages its own counters. Cache-related Prometheus counters (`CACHE_HITS`, `CACHE_MISSES`) still exist in `metrics.py` for future use.
 
-Two backends with automatic fallback:
-
-```
-Cache Strategy:
-  Quotes:       60s TTL    (prices change frequently)
-  Fundamentals: 1 hour TTL (quarterly data, rarely changes)
-  Analysis:     15 min TTL (avoid re-running expensive LLM calls)
-  Embeddings:   24 hour TTL (same text always gets same embedding)
-  Indicators:   5 min TTL  (technical indicators update continuously)
-```
-
-Redis in production, in-memory dict in development. All cache hits/misses are tracked as Prometheus metrics.
+The previous caching layer provided TTL-based caching for quotes, fundamentals, analyses, embeddings, and indicators with Redis in production and in-memory dict in development. That responsibility now lives closer to the data consumers rather than as a standalone middleware.
 
 ---
 
@@ -839,7 +828,19 @@ Users see tokens appear instantly instead of waiting 5-10 seconds for the comple
 ### 6.6 Prometheus Metrics & Monitoring
 
 **File:** `src/metrics.py` (185 lines)
+**Exposure:** FastAPI-native at `GET /metrics` in `backend/app.py:143`
 **Config:** `monitoring/prometheus.yml`, `monitoring/grafana/`
+
+**Two exposure modes — because the backend and CLI are different execution paths:**
+
+| Mode | How `/metrics` Is Served | When |
+|------|--------------------------|------|
+| **FastAPI (Railway)** | Native FastAPI route at `/metrics` (`backend/app.py:143`). The standalone metrics server is **disabled** via `STOCK_RADAR_DISABLE_METRICS_SERVER=1` so you don't spawn a second HTTP server inside the backend process. | Running as deployed backend |
+| **CLI (`main.py`)** | The standalone `monitoring/server.py` metrics server starts on a separate port (default 9090). Only starts if `STOCK_RADAR_DISABLE_METRICS_SERVER` is not set. | Running `python main.py analyze ...` locally |
+
+**App lifecycle gauges** are set during FastAPI startup/shutdown (`backend/app.py:87-106`):
+- `SYSTEM_UP` → set to `1` on startup, `0` on shutdown
+- `ML_MODEL_LOADED` → checks if the ML model file exists at startup
 
 Exposes quantitative metrics about the AI system's behavior:
 
@@ -850,9 +851,26 @@ stockradar_llm_fallback_total          → How often fallbacks trigger
 stockradar_llm_tokens_total            → Total tokens consumed
 stockradar_analysis_confidence         → Distribution of confidence scores
 stockradar_analysis_signal_total       → Count of each signal type
+stockradar_analysis_duration_seconds   → Total pipeline duration (by mode)
 stockradar_api_cost_usd_total          → Running cost in USD
-stockradar_cache_hits_total            → Cache effectiveness
+stockradar_data_fetch_latency_seconds  → Data provider latency (by provider)
+stockradar_data_fetch_errors_total     → Data provider errors
+stockradar_scoring_composite           → Distribution of composite algo scores
 stockradar_guardrail_triggers_total    → How often guardrails fire
+stockradar_system_up                   → Whether the system is running
+stockradar_ml_model_loaded             → Whether an ML model is loaded
+stockradar_eval_accuracy               → Latest evaluation accuracy
+```
+
+**Practical Prometheus usage (Railway deployment):**
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: stock-radar-backend
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["your-railway-app.railway.app"]
+    metrics_path: /metrics
 ```
 
 ---
@@ -882,27 +900,35 @@ Every API response includes a `meta` block with full cost transparency:
 
 ## 7. The Backend API (FastAPI)
 
-**File:** `backend/app.py` (641 lines)
+**File:** `backend/app.py` (666 lines)
 
-Exposes the Python analysis engine to the web frontend:
+Exposes the Python analysis engine to the web frontend. Hosted on **Railway** as a standalone service.
 
 | Endpoint | Method | What It Does |
 |----------|--------|-------------|
-| `/v1/analyze` | POST | Start async analysis job |
-| `/v1/analyze/{job_id}` | GET | Check analysis job status |
-| `/v1/ask` | POST | Chat assistant Q&A |
+| `/v1/analyze/jobs` | POST | Start async analysis job (returns job ID) |
+| `/v1/analyze/jobs/{job_id}` | GET | Check analysis job status |
+| `/v1/ask` | POST | Chat assistant Q&A (with session history) |
 | `/v1/fundamentals` | GET | Stock fundamentals |
-| `/v1/agent/momentum` | GET | Momentum analysis |
+| `/v1/agent/momentum` | GET | Momentum analysis with score breakdown |
 | `/v1/agent/rsi-divergence` | GET | RSI divergence detection |
 | `/v1/agent/social-sentiment` | GET | Reddit/social buzz |
-| `/v1/agent/support-resistance` | GET | Key price levels |
-| `/v1/agent/stock-score` | GET | Algorithmic scores |
-| `/v1/agent/news-impact` | GET | News sentiment analysis |
-| `/v1/health` | GET | System health check |
+| `/v1/agent/support-resistance` | GET | Pivot points + Bollinger + ATR |
+| `/v1/agent/stock-score` | GET | Full algorithmic scores (momentum, value, quality, risk) |
+| `/v1/agent/news-impact` | GET | News sentiment with sector context |
+| `/metrics` | GET | Prometheus metrics (FastAPI-native, no auth) |
+| `/health` | GET | System health check with dependency status |
 
-**Authentication:** Bearer token (`BACKEND_AUTH_TOKEN` env var)
+**Key design decisions in the backend:**
 
-**Job Management:** Long-running analyses run in a background thread pool. The frontend polls for status using the job ID.
+1. **Metrics server suppression** — `backend/app.py:23` sets `STOCK_RADAR_DISABLE_METRICS_SERVER=1` before importing `StockRadar`, so the CLI's standalone metrics server never starts inside the FastAPI process. Instead, metrics are served at `GET /metrics` as a native FastAPI route.
+2. **Lifecycle gauges** — `@app.on_event("startup")` sets `SYSTEM_UP=1` and checks ML model status. `@app.on_event("shutdown")` sets `SYSTEM_UP=0`.
+3. **Guardrail results in payloads** — Analysis results now include a `guardrails` key (when guardrails ran) with pass/fail, error/warning counts, and issue details (`main.py:733`).
+4. **Token accounting in chat** — The `/v1/ask` endpoint wires `TokenAccountant` through the `StockChatAssistant`, tracking token usage and fallback metrics for every chat interaction.
+
+**Authentication:** Bearer token (`BACKEND_AUTH_TOKEN` env var) on all `/v1/` routes.
+
+**Job Management:** Long-running analyses run in a background thread pool (`max_workers=2`, 30-min TTL). The frontend polls for status using the job ID.
 
 ---
 
@@ -940,7 +966,9 @@ A smart contract on Aptos blockchain that registers and tracks AI agents on-chai
 ### XMTP Messaging Agent
 **Directory:** `xmtp/`
 
-An XMTP messaging bot that lets users interact with Stock Radar through decentralized messaging protocols.
+An XMTP messaging agent (`xmtp-agent.js`) that lets users interact with Stock Radar through decentralized messaging protocols.
+
+> **Note:** The previous `xmtp-client.ts` TypeScript wrapper, `task-orchestrator.ts`, `petra-wallet-provider.tsx`, and `wallet-connect-button.tsx` components have been removed. The x402 demo page remains as a reference implementation, but wallet connection is no longer wired into the main app flow.
 
 ### Blockchain Indexer
 **Directory:** `indexer/`

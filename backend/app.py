@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response, status
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
@@ -20,6 +20,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 load_dotenv(ROOT_DIR / ".env")
+os.environ.setdefault("STOCK_RADAR_DISABLE_METRICS_SERVER", "1")
 
 from main import StockRadar  # noqa: E402
 from agents.chat_assistant import ChatMessage, StockChatAssistant  # noqa: E402
@@ -27,6 +28,7 @@ from agents.fetcher import NewsItem, StockFetcher  # noqa: E402
 from agents.rag_retriever import RAGRetriever  # noqa: E402
 from agents.scorer import StockScorer  # noqa: E402
 from agents.storage import StockStorage  # noqa: E402
+from metrics import ML_MODEL_LOADED, SYSTEM_UP, get_metrics_response  # noqa: E402
 
 from backend.auth import verify_backend_auth  # noqa: E402
 from backend.jobs import AnalyzeJobManager  # noqa: E402
@@ -85,6 +87,23 @@ _radar: StockRadar | None = None
 @app.on_event("startup")
 def _startup() -> None:
     app.state.started_at = datetime.now(timezone.utc)
+    SYSTEM_UP.set(1)
+    try:
+        from config import settings as cfg
+
+        loaded = bool(
+            cfg.ml_model_enabled
+            and cfg.ml_model_path
+            and Path(cfg.ml_model_path).exists()
+        )
+        ML_MODEL_LOADED.set(1 if loaded else 0)
+    except Exception:
+        ML_MODEL_LOADED.set(0)
+
+
+@app.on_event("shutdown")
+def _shutdown() -> None:
+    SYSTEM_UP.set(0)
 
 
 def _validate_symbol(symbol: str) -> str:
@@ -119,6 +138,12 @@ def _news_item_to_dict(item: NewsItem) -> dict[str, Any]:
         "published_at": item.published_at.isoformat() if item.published_at else None,
         "url": item.url,
     }
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics() -> Response:
+    payload, content_type = get_metrics_response()
+    return Response(content=payload, media_type=content_type)
 
 
 def _get_radar() -> StockRadar:

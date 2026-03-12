@@ -23,6 +23,8 @@ from litellm import completion
 from agents.storage import StockStorage
 from agents.rag_retriever import RAGRetriever, RAGContext
 from agents.usage_tracker import get_tracker
+from metrics import LLM_FALLBACK
+from token_accounting import TokenAccountant
 
 try:
     from config import settings
@@ -595,6 +597,7 @@ Rules:
         messages: List[Dict[str, str]],
         temperature: float = 0.3,
         task: str = "chat",
+        accountant: Optional[TokenAccountant] = None,
     ) -> tuple[str, str, int]:
         """
         Call LLM with fallback chain.
@@ -612,8 +615,10 @@ Rules:
             raise Exception("No available LLM providers configured for requested task.")
 
         last_error = None
+        failed_models: list[str] = []
 
         for model in models:
+            started_at = time.time()
             try:
                 logger.info(f"Trying model for task={task}: {model}")
 
@@ -633,28 +638,58 @@ Rules:
                 response = completion(**kwargs)
 
                 content = response.choices[0].message.content
-                tokens = 0
-
-                if hasattr(response, 'usage') and response.usage:
-                    usage = response.usage
-                    if hasattr(usage, 'total_tokens') and usage.total_tokens:
-                        tokens = usage.total_tokens
-                    elif hasattr(usage, 'prompt_tokens') and hasattr(usage, 'completion_tokens'):
-                        tokens = (usage.prompt_tokens or 0) + (usage.completion_tokens or 0)
+                prompt_tokens, completion_tokens, tokens = self._extract_usage_counts(response)
 
                 # Track usage
                 service = "zai" if model.startswith("openai/glm") else model.split("/")[0]
                 get_tracker().track(service, count=1, tokens=tokens)
+                if accountant:
+                    accountant.record_llm_call(
+                        model=model,
+                        tokens_in=prompt_tokens,
+                        tokens_out=completion_tokens,
+                        latency_sec=time.time() - started_at,
+                    )
+                if failed_models:
+                    LLM_FALLBACK.labels(from_model=failed_models[-1], to_model=model).inc()
 
                 logger.info(f"Success with {model} ({tokens} tokens)")
                 return content, model, tokens
 
             except Exception as e:
                 last_error = e
+                failed_models.append(model)
+                if accountant:
+                    accountant.record_llm_error(model)
                 logger.warning(f"{model} failed: {e}")
                 continue
 
         raise Exception(f"All models failed. Last error: {last_error}")
+
+    @staticmethod
+    def _extract_usage_counts(response: Any) -> tuple[int, int, int]:
+        """Normalize token usage across LiteLLM provider responses."""
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+
+        if hasattr(response, "usage") and response.usage:
+            usage = response.usage
+            if isinstance(usage, dict):
+                prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+                completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+                total_tokens = int(usage.get("total_tokens", 0) or 0)
+            else:
+                prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+                completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+                total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
+
+        if total_tokens <= 0:
+            total_tokens = prompt_tokens + completion_tokens
+        if prompt_tokens == 0 and completion_tokens == 0 and total_tokens > 0:
+            prompt_tokens = total_tokens
+
+        return prompt_tokens, completion_tokens, total_tokens
 
     def ask(
         self,
@@ -746,8 +781,15 @@ available — don't summarize away the numbers. Explain technical terms inline."
         messages.append({"role": "user", "content": user_message})
 
         # Call LLM
+        accountant = TokenAccountant()
+        accountant.set_mode("chat")
         try:
-            answer, model_used, tokens_used = self._call_llm(messages, task="chat")
+            answer, model_used, tokens_used = self._call_llm(
+                messages,
+                task="chat",
+                accountant=accountant,
+            )
+            accountant.get_request_meta()
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             answer = f"I apologize, but I encountered an error processing your question: {str(e)}"

@@ -51,20 +51,28 @@ class StockRadar:
         """Initialize all components."""
         logger.info("Initializing Stock Radar...")
 
-        # Start metrics server in background
-        try:
-            from monitoring.server import start_server as start_metrics_server
-            from config import settings
-            self._metrics_server = start_metrics_server(
-                port=settings.metrics_port, background=True
-            )
-            logger.info(f"Metrics server started on port {settings.metrics_port}")
+        metrics_disabled = os.getenv("STOCK_RADAR_DISABLE_METRICS_SERVER", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if not metrics_disabled:
+            # Start metrics server in background for CLI usage.
+            try:
+                from monitoring.server import start_server as start_metrics_server
+                from config import settings
+                self._metrics_server = start_metrics_server(
+                    port=settings.metrics_port, background=True
+                )
+                logger.info(f"Metrics server started on port {settings.metrics_port}")
 
-            # Mark system as up
-            from metrics import SYSTEM_UP
-            SYSTEM_UP.set(1)
-        except Exception as e:
-            logger.warning(f"Could not start metrics server: {e}")
+                # Mark system as up
+                from metrics import SYSTEM_UP
+                SYSTEM_UP.set(1)
+            except Exception as e:
+                logger.warning(f"Could not start metrics server: {e}")
+        else:
+            logger.info("Embedded metrics server disabled for this process")
 
         self.fetcher = StockFetcher()
         self.analyzer = StockAnalyzer()
@@ -721,6 +729,9 @@ class StockRadar:
                     "algo_take_profit": algo_prediction.get("take_profit"),
                     "scoring_method": algo_prediction.get("scoring_method"),
                 })
+
+            if getattr(analysis, "guardrail_result", None):
+                result["guardrails"] = analysis.guardrail_result
 
             return result
 
