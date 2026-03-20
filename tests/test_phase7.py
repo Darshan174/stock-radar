@@ -296,7 +296,7 @@ class TestChatEnsureStockData:
         mock_storage = MagicMock()
         mock_storage.get_stock_by_symbol.return_value = {"id": 1, "symbol": "AAPL"}
 
-        from agents.chat_assistant import StockChatAssistant
+        from services.chat_assistant import StockChatAssistant
         assistant = StockChatAssistant.__new__(StockChatAssistant)
         assistant.storage = mock_storage
 
@@ -311,7 +311,7 @@ class TestChatEnsureStockData:
             {"id": 1, "symbol": "RELIANCE.NS"} if s == "RELIANCE.NS" else None
         )
 
-        from agents.chat_assistant import StockChatAssistant
+        from services.chat_assistant import StockChatAssistant
         assistant = StockChatAssistant.__new__(StockChatAssistant)
         assistant.storage = mock_storage
 
@@ -332,7 +332,7 @@ class TestChatEnsureStockData:
             "news": [],
         }
 
-        from agents.chat_assistant import StockChatAssistant
+        from services.chat_assistant import StockChatAssistant
         assistant = StockChatAssistant.__new__(StockChatAssistant)
         assistant.storage = mock_storage
 
@@ -353,7 +353,7 @@ class TestChatEnsureStockData:
         mock_storage = MagicMock()
         mock_storage.get_stock_by_symbol.return_value = None
 
-        from agents.chat_assistant import StockChatAssistant
+        from services.chat_assistant import StockChatAssistant
         assistant = StockChatAssistant.__new__(StockChatAssistant)
         assistant.storage = mock_storage
 
@@ -370,7 +370,7 @@ class TestChatEnsureStockData:
         mock_storage = MagicMock()
         mock_storage.get_stock_by_symbol.return_value = None
 
-        from agents.chat_assistant import StockChatAssistant
+        from services.chat_assistant import StockChatAssistant
         assistant = StockChatAssistant.__new__(StockChatAssistant)
         assistant.storage = mock_storage
 

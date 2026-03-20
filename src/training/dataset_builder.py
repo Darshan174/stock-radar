@@ -438,8 +438,8 @@ def build_dataset(
     Returns:
         Number of rows written.
     """
-    from agents.fetcher import StockFetcher
-    from agents.scorer import StockScorer
+    from services.fetcher import StockFetcher
+    from services.scorer import StockScorer
 
     fetcher = StockFetcher()
     scorer = StockScorer()

@@ -61,7 +61,7 @@ class RAGRetriever:
             storage: StockStorage instance (will create if not provided)
         """
         if storage is None:
-            from agents.storage import StockStorage
+            from services.storage import StockStorage
             self.storage = StockStorage()
         else:
             self.storage = storage

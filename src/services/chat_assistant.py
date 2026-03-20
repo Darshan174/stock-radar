@@ -20,9 +20,9 @@ from dataclasses import dataclass, field
 
 from litellm import completion
 
-from agents.storage import StockStorage
-from agents.rag_retriever import RAGRetriever, RAGContext
-from agents.usage_tracker import get_tracker
+from services.storage import StockStorage
+from services.rag_retriever import RAGRetriever, RAGContext
+from services.usage_tracker import get_tracker
 from metrics import LLM_FALLBACK
 from token_accounting import TokenAccountant
 
@@ -301,7 +301,7 @@ Rules:
 
         # No data found — fetch fresh
         try:
-            from agents.fetcher import StockFetcher
+            from services.fetcher import StockFetcher
             import threading
 
             fetcher = StockFetcher()

@@ -89,6 +89,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # Embeddings
     # -------------------------------------------------------------------------
+    embedding_provider: str = Field(default="cohere", alias="EMBEDDING_PROVIDER")
     cohere_api_key: str | None = Field(default=None, alias="COHERE_API_KEY")
     embedding_model: str = Field(
         default="embed-english-v3.0", alias="EMBEDDING_MODEL"
@@ -172,6 +173,15 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     metrics_port: int = Field(default=9090, alias="METRICS_PORT")
     health_check_enabled: bool = Field(default=True, alias="HEALTH_CHECK_ENABLED")
+
+    # -------------------------------------------------------------------------
+    # AI Agents (ReAct)
+    # -------------------------------------------------------------------------
+    agent_model: str = Field(
+        default="gemini/gemini-2.5-pro", alias="AGENT_MODEL"
+    )
+    agent_max_steps: int = Field(default=10, alias="AGENT_MAX_STEPS")
+    agent_temperature: float = Field(default=0.2, alias="AGENT_TEMPERATURE")
 
     # -------------------------------------------------------------------------
     # Prompt Versioning

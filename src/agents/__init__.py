@@ -1,25 +1,14 @@
-"""Stock Radar Agents
+"""Stock Radar AI Agents — Real ReAct agents with tool use."""
 
-Core agents for stock market analysis:
-- fetcher: Yahoo Finance stock data fetching
-- storage: Supabase persistence with Cohere embeddings
-- analyzer: LiteLLM-powered analysis (ZAI GLM-4.7 -> Gemini)
-- alerts: Slack & Telegram notifications
-"""
-
-from .fetcher import StockFetcher
-from .storage import StockStorage, CohereEmbeddings
-from .analyzer import StockAnalyzer, TradingMode, Signal
-from .alerts import SlackNotifier, TelegramNotifier, NotificationManager
+from agents.react_engine import AgentResult, AgentStep, ReActEngine, ToolDefinition
+from agents.research_agent import ResearchAgent
+from agents.trading_agent import TradingAgent
 
 __all__ = [
-    "StockFetcher",
-    "StockStorage",
-    "CohereEmbeddings",
-    "StockAnalyzer",
-    "TradingMode",
-    "Signal",
-    "SlackNotifier",
-    "TelegramNotifier",
-    "NotificationManager",
+    "AgentResult",
+    "AgentStep",
+    "ReActEngine",
+    "ResearchAgent",
+    "ToolDefinition",
+    "TradingAgent",
 ]

@@ -39,3 +39,13 @@ class AskResponse(BaseModel):
     processingTimeMs: int
     sessionId: str
     contextRetrieved: dict[str, Any]
+
+
+# ── Agent endpoints ──────────────────────────────────────────────────────
+
+class ResearchRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=2000)
+
+
+class TradeRequest(BaseModel):
+    instruction: str = Field(..., min_length=1, max_length=2000)

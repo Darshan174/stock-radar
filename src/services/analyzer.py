@@ -15,8 +15,8 @@ from enum import Enum
 import litellm
 from litellm import completion
 
-from agents.usage_tracker import get_tracker
-from agents.scorer import StockScorer
+from services.usage_tracker import get_tracker
+from services.scorer import StockScorer
 from guardrails import GuardrailEngine
 from metrics import (
     ANALYSIS_CONFIDENCE,
@@ -42,8 +42,8 @@ except ImportError:
 
 # RAG imports (optional, for enhanced analysis)
 try:
-    from agents.rag_retriever import RAGRetriever
-    from agents.rag_validator import RAGValidator
+    from services.rag_retriever import RAGRetriever
+    from services.rag_validator import RAGValidator
     RAG_AVAILABLE = True
 except ImportError:
     RAG_AVAILABLE = False
@@ -490,9 +490,19 @@ class StockAnalyzer:
             return "", []
 
         try:
+            rsi = indicators.get("rsi_14", "N/A")
+            macd = indicators.get("macd", "N/A")
+            price = quote.get("price", "N/A")
+            change_pct = quote.get("change_percent", 0)
+
+            query = (
+                f"{symbol} {mode} analysis with RSI {rsi} MACD {macd} "
+                f"price {price} change {change_pct}%"
+            )
+
             # Get full context object to access raw documents
             rag_context = self.rag_retriever.retrieve_context(
-                query=f"{symbol} {mode} analysis",
+                query=query,
                 stock_symbol=symbol,
                 include_analyses=True,
                 include_signals=True,

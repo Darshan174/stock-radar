@@ -5,12 +5,19 @@ Persists stocks, price data, analysis, signals, and alerts with semantic search.
 
 import os
 import logging
+import math
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Optional, Any
 from decimal import Decimal
 
 import requests
 from supabase import create_client, Client
+
+try:
+    from config import settings as _cfg
+except ImportError:
+    _cfg = None
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -19,17 +26,101 @@ logging.basicConfig(
 )
 
 
-class CohereEmbeddings:
+@dataclass
+class EmbeddingResult:
+    """Embedding vector plus metadata about how it was generated."""
+
+    vector: list[float]
+    provider: str
+    model: str
+    dimension: int
+
+
+class BaseEmbeddings:
+    """Common interface for embedding providers."""
+
+    provider_name = "unknown"
+
+    def __init__(
+        self,
+        model: str,
+        configured_dimension: Optional[int] = None,
+        timeout: int = 30,
+    ):
+        self.model = model
+        self.configured_dimension = configured_dimension
+        self.timeout = timeout
+
+    @staticmethod
+    def _truncate_text(text: str, max_chars: int = 4000) -> str:
+        if len(text) > max_chars:
+            logger.debug(f"Truncating text from {len(text)} to {max_chars} chars")
+            return text[:max_chars]
+        return text
+
+    @staticmethod
+    def _normalize_vector(values: list[float]) -> list[float]:
+        magnitude = math.sqrt(sum(v * v for v in values))
+        if magnitude <= 0:
+            return values
+        return [v / magnitude for v in values]
+
+    def embed(
+        self,
+        text: str,
+        input_type: str = "search_document",
+        title: Optional[str] = None,
+    ) -> Optional[EmbeddingResult]:
+        raise NotImplementedError
+
+    def embed_text(
+        self,
+        text: str,
+        input_type: str = "search_document",
+        title: Optional[str] = None,
+    ) -> list[float]:
+        result = self.embed(text=text, input_type=input_type, title=title)
+        return result.vector if result else []
+
+    def is_available(self) -> bool:
+        try:
+            result = self.embed("test")
+            return bool(result and result.vector)
+        except Exception:
+            return False
+
+
+class NullEmbeddings(BaseEmbeddings):
+    """Disabled embeddings provider used when configuration is incomplete."""
+
+    provider_name = "disabled"
+
+    def __init__(self):
+        super().__init__(model="disabled", configured_dimension=None, timeout=0)
+
+    def embed(
+        self,
+        text: str,
+        input_type: str = "search_document",
+        title: Optional[str] = None,
+    ) -> Optional[EmbeddingResult]:
+        _ = (text, input_type, title)
+        return None
+
+
+class CohereEmbeddings(BaseEmbeddings):
     """Generate embeddings using Cohere API for financial text."""
 
-    # Cohere embed-english-v3.0 produces 1024-dimensional embeddings
-    EMBEDDING_DIMENSION = 1024
+    provider_name = "cohere"
+    DEFAULT_MODEL = "embed-english-v3.0"
+    DEFAULT_DIMENSION = 1024
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "embed-english-v3.0",
-        timeout: int = 30
+        model: str = DEFAULT_MODEL,
+        configured_dimension: Optional[int] = DEFAULT_DIMENSION,
+        timeout: int = 30,
     ):
         """
         Initialize Cohere embeddings client.
@@ -39,9 +130,12 @@ class CohereEmbeddings:
             model: Embedding model name
             timeout: Request timeout in seconds
         """
+        super().__init__(
+            model=model,
+            configured_dimension=configured_dimension or self.DEFAULT_DIMENSION,
+            timeout=timeout,
+        )
         self.api_key = api_key or os.getenv("COHERE_API_KEY")
-        self.model = model
-        self.timeout = timeout
         self.api_url = "https://api.cohere.ai/v1/embed"
 
         if not self.api_key:
@@ -49,7 +143,12 @@ class CohereEmbeddings:
         else:
             logger.info(f"Initialized CohereEmbeddings with model={model}")
 
-    def embed_text(self, text: str, input_type: str = "search_document") -> list[float]:
+    def embed(
+        self,
+        text: str,
+        input_type: str = "search_document",
+        title: Optional[str] = None,
+    ) -> Optional[EmbeddingResult]:
         """
         Generate embedding vector for text using Cohere.
 
@@ -58,21 +157,18 @@ class CohereEmbeddings:
             input_type: 'search_document' for storage, 'search_query' for queries
 
         Returns:
-            Embedding vector as list of floats, or empty list on failure
+            Embedding metadata, or None on failure
         """
+        _ = title
         if not self.api_key:
             logger.warning("Cohere API key not set, skipping embedding")
-            return []
+            return None
 
         if not text or not text.strip():
             logger.warning("Empty text provided for embedding")
-            return []
+            return None
 
-        # Truncate very long text (Cohere handles ~512 tokens well)
-        max_chars = 4000
-        if len(text) > max_chars:
-            logger.debug(f"Truncating text from {len(text)} to {max_chars} chars")
-            text = text[:max_chars]
+        text = self._truncate_text(text)
 
         try:
             response = requests.post(
@@ -96,35 +192,184 @@ class CohereEmbeddings:
 
             if embeddings and len(embeddings) > 0:
                 embedding = embeddings[0]
-                logger.debug(f"Generated embedding with {len(embedding)} dimensions")
+                dimension = len(embedding)
+                logger.debug(f"Generated embedding with {dimension} dimensions")
+                if self.configured_dimension and dimension != self.configured_dimension:
+                    logger.warning(
+                        "Configured embedding_dim=%s but Cohere returned %s dimensions",
+                        self.configured_dimension,
+                        dimension,
+                    )
                 # Track Cohere usage
-                from agents.usage_tracker import get_tracker
+                from services.usage_tracker import get_tracker
                 get_tracker().track("cohere", count=1)
-                return embedding
+                return EmbeddingResult(
+                    vector=embedding,
+                    provider=self.provider_name,
+                    model=self.model,
+                    dimension=dimension,
+                )
 
             logger.warning("No embeddings returned from Cohere")
-            return []
+            return None
 
         except requests.exceptions.Timeout:
             logger.error(f"Timeout generating embedding (>{self.timeout}s)")
-            return []
+            return None
         except requests.exceptions.HTTPError as e:
             logger.error(f"HTTP error from Cohere: {e.response.status_code} - {e.response.text}")
-            return []
+            return None
         except Exception as e:
             logger.error(f"Unexpected error generating embedding: {type(e).__name__}: {str(e)}")
-            return []
+            return None
 
-    def is_available(self) -> bool:
-        """Check if Cohere API is accessible."""
+
+class GoogleEmbeddings(BaseEmbeddings):
+    """Generate embeddings using the Gemini embeddings REST API."""
+
+    provider_name = "google"
+    DEFAULT_MODEL = "gemini-embedding-001"
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = DEFAULT_MODEL,
+        configured_dimension: Optional[int] = None,
+        timeout: int = 30,
+    ):
+        super().__init__(
+            model=model,
+            configured_dimension=configured_dimension,
+            timeout=timeout,
+        )
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        self.api_url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:embedContent"
+        )
+
         if not self.api_key:
-            return False
+            logger.warning("Gemini API key not set - Google embeddings will be disabled")
+        else:
+            logger.info(
+                "Initialized GoogleEmbeddings with model=%s output_dim=%s",
+                self.model,
+                self.configured_dimension or "default",
+            )
+
+    def embed(
+        self,
+        text: str,
+        input_type: str = "search_document",
+        title: Optional[str] = None,
+    ) -> Optional[EmbeddingResult]:
+        if not self.api_key:
+            logger.warning("Gemini API key not set, skipping embedding")
+            return None
+
+        if not text or not text.strip():
+            logger.warning("Empty text provided for embedding")
+            return None
+
+        text = self._truncate_text(text)
+        task_type = (
+            "RETRIEVAL_QUERY" if input_type == "search_query" else "RETRIEVAL_DOCUMENT"
+        )
+        payload: dict[str, Any] = {
+            "model": f"models/{self.model}",
+            "content": {
+                "parts": [{"text": text}],
+            },
+            "taskType": task_type,
+        }
+        if self.configured_dimension:
+            payload["outputDimensionality"] = self.configured_dimension
+        if title and task_type == "RETRIEVAL_DOCUMENT":
+            payload["title"] = title
+
         try:
-            # Simple test with minimal text
-            embedding = self.embed_text("test")
-            return len(embedding) > 0
-        except Exception:
-            return False
+            response = requests.post(
+                self.api_url,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": self.api_key,
+                },
+                json=payload,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            embedding = data.get("embedding", {}).get("values", [])
+            if not embedding:
+                logger.warning("No embeddings returned from Google")
+                return None
+
+            if self.configured_dimension and self.configured_dimension != 3072:
+                embedding = self._normalize_vector(embedding)
+
+            from services.usage_tracker import get_tracker
+
+            get_tracker().track("gemini", count=1)
+            return EmbeddingResult(
+                vector=embedding,
+                provider=self.provider_name,
+                model=self.model,
+                dimension=len(embedding),
+            )
+
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout generating Google embedding (>{self.timeout}s)")
+            return None
+        except requests.exceptions.HTTPError as e:
+            logger.error(
+                f"HTTP error from Gemini embeddings: {e.response.status_code} - {e.response.text}"
+            )
+            return None
+        except Exception as e:
+            logger.error(
+                f"Unexpected error generating Google embedding: {type(e).__name__}: {str(e)}"
+            )
+            return None
+
+
+def create_embeddings_client(
+    provider: str,
+    model: Optional[str],
+    dimension: Optional[int],
+    cohere_key: Optional[str] = None,
+    gemini_key: Optional[str] = None,
+    timeout: int = 30,
+) -> BaseEmbeddings:
+    """Create the configured embeddings client."""
+
+    normalized_provider = (provider or "cohere").strip().lower()
+
+    if normalized_provider in ("disabled", "none", "off"):
+        return NullEmbeddings()
+
+    if normalized_provider == "cohere":
+        resolved_model = model or CohereEmbeddings.DEFAULT_MODEL
+        resolved_dimension = dimension or CohereEmbeddings.DEFAULT_DIMENSION
+        return CohereEmbeddings(
+            api_key=cohere_key,
+            model=resolved_model,
+            configured_dimension=resolved_dimension,
+            timeout=timeout,
+        )
+
+    if normalized_provider in ("google", "gemini"):
+        resolved_model = model
+        if not resolved_model or resolved_model == CohereEmbeddings.DEFAULT_MODEL:
+            resolved_model = GoogleEmbeddings.DEFAULT_MODEL
+        return GoogleEmbeddings(
+            api_key=gemini_key,
+            model=resolved_model,
+            configured_dimension=dimension,
+            timeout=timeout,
+        )
+
+    logger.warning("Unknown embedding provider '%s'; embeddings disabled", provider)
+    return NullEmbeddings()
 
 
 class StockStorage:
@@ -147,7 +392,11 @@ class StockStorage:
         self,
         url: Optional[str] = None,
         key: Optional[str] = None,
-        cohere_key: Optional[str] = None
+        cohere_key: Optional[str] = None,
+        embedding_provider: Optional[str] = None,
+        embedding_model: Optional[str] = None,
+        embedding_dim: Optional[int] = None,
+        gemini_key: Optional[str] = None,
     ):
         """
         Initialize Supabase client and embeddings.
@@ -156,12 +405,18 @@ class StockStorage:
             url: Supabase project URL (defaults to SUPABASE_URL env var)
             key: Supabase API key (defaults to SUPABASE_KEY env var)
             cohere_key: Cohere API key for embeddings
+            embedding_provider: Embedding backend ('cohere', 'google', 'disabled')
+            embedding_model: Embedding model name
+            embedding_dim: Expected / requested embedding dimension
+            gemini_key: Gemini API key for Google embeddings
 
         Raises:
             ValueError: If Supabase credentials are missing
         """
-        url = url or os.getenv("SUPABASE_URL")
-        key = key or os.getenv("SUPABASE_KEY")
+        settings_url = getattr(_cfg, "supabase_url", None) if _cfg else None
+        settings_key = getattr(_cfg, "supabase_key", None) if _cfg else None
+        url = url or settings_url or os.getenv("SUPABASE_URL")
+        key = key or settings_key or os.getenv("SUPABASE_KEY")
 
         if not url or not key:
             raise ValueError(
@@ -170,9 +425,114 @@ class StockStorage:
             )
 
         self.client: Client = create_client(url, key)
-        self.embeddings = CohereEmbeddings(api_key=cohere_key)
+        self.embedding_provider = (
+            embedding_provider
+            or (getattr(_cfg, "embedding_provider", None) if _cfg else None)
+            or os.getenv("EMBEDDING_PROVIDER", "cohere")
+        )
+        self.embedding_model = (
+            embedding_model
+            or (getattr(_cfg, "embedding_model", None) if _cfg else None)
+            or os.getenv("EMBEDDING_MODEL")
+            or CohereEmbeddings.DEFAULT_MODEL
+        )
+        self.embedding_dim = (
+            embedding_dim
+            if embedding_dim is not None
+            else (getattr(_cfg, "embedding_dim", None) if _cfg else None)
+        )
+        if self.embedding_dim is None:
+            raw_dim = os.getenv("EMBEDDING_DIM")
+            self.embedding_dim = int(raw_dim) if raw_dim else CohereEmbeddings.DEFAULT_DIMENSION
 
-        logger.info(f"Initialized StockStorage connected to {url}")
+        cohere_key = (
+            cohere_key
+            or (getattr(_cfg, "cohere_api_key", None) if _cfg else None)
+            or os.getenv("COHERE_API_KEY")
+        )
+        gemini_key = (
+            gemini_key
+            or (getattr(_cfg, "gemini_api_key", None) if _cfg else None)
+            or os.getenv("GEMINI_API_KEY")
+        )
+
+        self.embeddings = create_embeddings_client(
+            provider=self.embedding_provider,
+            model=self.embedding_model,
+            dimension=self.embedding_dim,
+            cohere_key=cohere_key,
+            gemini_key=gemini_key,
+        )
+        self.embedding_provider = self.embeddings.provider_name
+        self.embedding_model = self.embeddings.model
+        self.embedding_dim = self.embeddings.configured_dimension or self.embedding_dim
+
+        logger.info(
+            "Initialized StockStorage connected to %s using embeddings provider=%s model=%s dim=%s",
+            url,
+            self.embedding_provider,
+            self.embedding_model,
+            self.embedding_dim,
+        )
+
+    @staticmethod
+    def _embedding_columns(prefix: str = "embedding") -> tuple[str, ...]:
+        return (
+            prefix,
+            f"{prefix}_provider",
+            f"{prefix}_model_name",
+            f"{prefix}_dimension",
+        )
+
+    @staticmethod
+    def _embedding_metadata(
+        result: Optional[EmbeddingResult],
+        prefix: str = "embedding",
+    ) -> dict[str, Any]:
+        if not result:
+            return {}
+        return {
+            prefix: result.vector,
+            f"{prefix}_provider": result.provider,
+            f"{prefix}_model_name": result.model,
+            f"{prefix}_dimension": result.dimension,
+        }
+
+    @staticmethod
+    def _build_signal_embedding_text(
+        signal_type: str,
+        signal: str,
+        reason: str,
+        price_at_signal: float,
+        importance: str,
+    ) -> str:
+        return (
+            f"{signal_type} {signal} trading signal at {price_at_signal}. "
+            f"Importance: {importance}. Reason: {reason}"
+        )
+
+    def _insert_with_legacy_retry(
+        self,
+        table_name: str,
+        data: dict[str, Any],
+        optional_fields: tuple[str, ...] = (),
+    ):
+        try:
+            return self.client.table(table_name).insert(data).execute()
+        except Exception as e:
+            error_msg = str(e).lower()
+            if optional_fields and "column" in error_msg:
+                logger.warning(
+                    "Insert into %s failed due to missing optional columns. Retrying without %s. "
+                    "Run the latest migrations to enable embedding metadata.",
+                    table_name,
+                    ", ".join(optional_fields),
+                )
+                legacy_data = {
+                    key: value for key, value in data.items() if key not in optional_fields
+                }
+                return self.client.table(table_name).insert(legacy_data).execute()
+            raise
 
     # -------------------------------------------------------------------------
     # SCHEMA VERIFICATION
@@ -187,7 +547,8 @@ class StockStorage:
         """
         required_tables = [
             "users", "stocks", "watchlist", "price_history",
-            "technical_indicators", "news", "analysis", "signals", "alerts"
+            "technical_indicators", "news", "analysis", "signals", "alerts",
+            "chat_history", "knowledge_base",
         ]
         missing_tables = []
 
@@ -689,7 +1050,11 @@ class StockStorage:
         try:
             # Generate embedding for semantic search
             embed_text = f"{headline}. {summary}" if summary else headline
-            embedding = self.embeddings.embed_text(embed_text)
+            embedding_result = self.embeddings.embed(
+                embed_text,
+                input_type="search_document",
+                title=headline,
+            )
 
             data = {
                 "stock_id": stock_id,
@@ -700,11 +1065,15 @@ class StockStorage:
                 "published_at": published_at.isoformat() if published_at else None,
                 "sentiment_score": sentiment_score,
                 "sentiment_label": sentiment_label,
-                "embedding": embedding if embedding else None,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
+            data.update(self._embedding_metadata(embedding_result))
 
-            result = self.client.table("news").insert(data).execute()
+            result = self._insert_with_legacy_retry(
+                "news",
+                data,
+                optional_fields=self._embedding_columns(),
+            )
 
             if result.data:
                 logger.info(f"Stored news: {headline[:50]}...")
@@ -939,6 +1308,17 @@ class StockStorage:
             Stored signal record
         """
         try:
+            context_result = self.embeddings.embed(
+                self._build_signal_embedding_text(
+                    signal_type=signal_type,
+                    signal=signal,
+                    reason=reason,
+                    price_at_signal=price_at_signal,
+                    importance=importance,
+                ),
+                input_type="search_document",
+                title=f"{signal_type} {signal}",
+            )
             data = {
                 "stock_id": stock_id,
                 "analysis_id": analysis_id,
@@ -950,8 +1330,13 @@ class StockStorage:
                 "is_triggered": False,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
+            data.update(self._embedding_metadata(context_result, prefix="context_embedding"))
 
-            result = self.client.table("signals").insert(data).execute()
+            result = self._insert_with_legacy_retry(
+                "signals",
+                data,
+                optional_fields=self._embedding_columns(prefix="context_embedding"),
+            )
 
             if result.data:
                 logger.info(f"Stored {importance} {signal} signal for stock {stock_id}")
@@ -1157,9 +1542,13 @@ class StockStorage:
                 embedding_text += f" Sentiment: {sentiment_summary}"
 
             # Generate embedding
-            embedding = None
+            embedding_result = None
             if generate_embedding:
-                embedding = self.embeddings.embed_text(embedding_text)
+                embedding_result = self.embeddings.embed(
+                    embedding_text,
+                    input_type="search_document",
+                    title=f"{mode} {signal} analysis",
+                )
 
             data = {
                 "stock_id": stock_id,
@@ -1177,12 +1566,16 @@ class StockStorage:
                 "llm_tokens_used": llm_tokens_used,
                 "analysis_duration_ms": analysis_duration_ms,
                 "algo_prediction": algo_prediction,
-                "embedding": embedding if embedding else None,
-                "embedding_text": embedding_text if embedding else None,
+                "embedding_text": embedding_text if embedding_result else None,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
+            data.update(self._embedding_metadata(embedding_result))
 
-            result = self.client.table("analysis").insert(data).execute()
+            result = self._insert_with_legacy_retry(
+                "analysis",
+                data,
+                optional_fields=self._embedding_columns() + ("embedding_text",),
+            )
 
             if result.data:
                 logger.info(f"Stored {mode} analysis with embedding for stock {stock_id}: {signal}")
@@ -1386,9 +1779,13 @@ class StockStorage:
             Stored chat message record
         """
         try:
-            embedding = None
+            embedding_result = None
             if generate_embedding and content:
-                embedding = self.embeddings.embed_text(content)
+                embedding_result = self.embeddings.embed(
+                    content,
+                    input_type="search_document",
+                    title=role,
+                )
 
             data = {
                 "session_id": session_id,
@@ -1397,13 +1794,17 @@ class StockStorage:
                 "content": content,
                 "stock_symbols": stock_symbols,
                 "context_used": context_used,
-                "embedding": embedding if embedding else None,
                 "tokens_used": tokens_used,
                 "model_used": model_used,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
+            data.update(self._embedding_metadata(embedding_result))
 
-            result = self.client.table("chat_history").insert(data).execute()
+            result = self._insert_with_legacy_retry(
+                "chat_history",
+                data,
+                optional_fields=self._embedding_columns(),
+            )
 
             if result.data:
                 logger.debug(f"Stored chat message for session {session_id}")
@@ -1517,7 +1918,11 @@ class StockStorage:
         try:
             # Generate embedding from title + content
             embed_text = f"{title}. {content}"
-            embedding = self.embeddings.embed_text(embed_text)
+            embedding_result = self.embeddings.embed(
+                embed_text,
+                input_type="search_document",
+                title=title,
+            )
 
             data = {
                 "user_id": user_id,
@@ -1528,12 +1933,16 @@ class StockStorage:
                 "tags": tags,
                 "source_url": source_url,
                 "is_public": is_public,
-                "embedding": embedding if embedding else None,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }
+            data.update(self._embedding_metadata(embedding_result))
 
-            result = self.client.table("knowledge_base").insert(data).execute()
+            result = self._insert_with_legacy_retry(
+                "knowledge_base",
+                data,
+                optional_fields=self._embedding_columns(),
+            )
 
             if result.data:
                 logger.info(f"Stored knowledge entry: {title[:50]}...")
@@ -1682,19 +2091,27 @@ if __name__ == "__main__":
     print("Testing Stock Radar Storage Module")
     print("=" * 50)
 
-    # Test Cohere embeddings
-    print("\n1. Testing CohereEmbeddings...")
-    embeddings = CohereEmbeddings()
+    # Test configured embeddings provider
+    print("\n1. Testing embeddings client...")
+    embeddings = create_embeddings_client(
+        provider=getattr(_cfg, "embedding_provider", None) if _cfg else os.getenv("EMBEDDING_PROVIDER", "cohere"),
+        model=getattr(_cfg, "embedding_model", None) if _cfg else os.getenv("EMBEDDING_MODEL"),
+        dimension=getattr(_cfg, "embedding_dim", None) if _cfg else None,
+        cohere_key=getattr(_cfg, "cohere_api_key", None) if _cfg else os.getenv("COHERE_API_KEY"),
+        gemini_key=getattr(_cfg, "gemini_api_key", None) if _cfg else os.getenv("GEMINI_API_KEY"),
+    )
 
     if embeddings.is_available():
-        print(f"   Cohere API is available with model: {embeddings.model}")
+        print(
+            f"   Embeddings available via provider={embeddings.provider_name} model={embeddings.model}"
+        )
         test_embedding = embeddings.embed_text("RELIANCE stock is bullish today")
         if test_embedding:
             print(f"   Generated embedding with {len(test_embedding)} dimensions")
         else:
             print("   Warning: Failed to generate test embedding")
     else:
-        print("   Warning: Cohere API not available - check COHERE_API_KEY")
+        print("   Warning: Embeddings not available - check provider API keys and configuration")
 
     # Test Supabase storage
     print("\n2. Testing StockStorage...")

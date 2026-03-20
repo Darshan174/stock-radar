@@ -25,7 +25,7 @@ def test_task_route_parser():
 
 
 def test_analyzer_task_route_prefers_task_models(monkeypatch):
-    import agents.analyzer as analyzer_mod
+    import services.analyzer as analyzer_mod
 
     monkeypatch.setattr(
         analyzer_mod,
@@ -51,7 +51,7 @@ def test_analyzer_task_route_prefers_task_models(monkeypatch):
 
 
 def test_analyzer_task_route_filters_unavailable_provider(monkeypatch):
-    import agents.analyzer as analyzer_mod
+    import services.analyzer as analyzer_mod
 
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
@@ -81,7 +81,7 @@ def test_analyzer_task_route_filters_unavailable_provider(monkeypatch):
 
 
 def test_chat_task_route_uses_chat_chain(monkeypatch):
-    import agents.chat_assistant as chat_mod
+    import services.chat_assistant as chat_mod
 
     monkeypatch.setattr(
         chat_mod,

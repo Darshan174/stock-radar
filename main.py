@@ -21,11 +21,11 @@ load_dotenv()
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-from agents.fetcher import StockFetcher  # noqa: E402
-from agents.analyzer import StockAnalyzer  # noqa: E402
-from agents.storage import StockStorage  # noqa: E402
-from agents.alerts import NotificationManager  # noqa: E402
-from agents.usage_tracker import get_tracker  # noqa: E402
+from services.fetcher import StockFetcher  # noqa: E402
+from services.analyzer import StockAnalyzer  # noqa: E402
+from services.storage import StockStorage  # noqa: E402
+from services.alerts import NotificationManager  # noqa: E402
+from services.usage_tracker import get_tracker  # noqa: E402
 
 # Configure logging
 logging.basicConfig(
@@ -81,7 +81,7 @@ class StockRadar:
 
         # Start Finnhub WebSocket for real-time prices (free)
         try:
-            from agents.realtime import get_realtime_manager
+            from services.realtime import get_realtime_manager
             self._realtime = get_realtime_manager()
             if self._realtime.start():
                 logger.info("Finnhub real-time WebSocket started")
@@ -306,7 +306,7 @@ class StockRadar:
                         rt_data = None
                         rt_connected = False
                         try:
-                            from agents.realtime import get_realtime_manager
+                            from services.realtime import get_realtime_manager
                             rt = get_realtime_manager()
                             rt_connected = bool(getattr(rt, "is_connected", False))
                             if rt_connected and hasattr(rt, "get_latest"):
@@ -1112,6 +1112,22 @@ def main():
         help="Report date in YYYY-MM-DD (default: today UTC)",
     )
 
+    # research command - AI research agent
+    research_parser = subparsers.add_parser("research", help="AI research agent (multi-step reasoning)")
+    research_parser.add_argument(
+        "question",
+        nargs="?",
+        default=None,
+        help="Question to research (omit for interactive mode)",
+    )
+
+    # trade command - AI trading agent
+    trade_parser = subparsers.add_parser("trade", help="AI trading agent (paper trading)")
+    trade_parser.add_argument(
+        "instruction",
+        help="Trading instruction, e.g. 'Analyze AAPL and trade if the signal is strong'",
+    )
+
     # backfill command - fetch full historical data for stocks
     backfill_parser = subparsers.add_parser("backfill", help="Backfill full historical price data for stocks")
     backfill_parser.add_argument(
@@ -1284,7 +1300,7 @@ def main():
         print("Test complete!")
 
     elif args.command == "usage":
-        from agents.usage_tracker import get_tracker
+        from services.usage_tracker import get_tracker
 
         tracker = get_tracker()
 
@@ -1295,11 +1311,11 @@ def main():
             print(tracker.get_status_report())
 
     elif args.command == "chat":
-        from agents.chat_assistant import run_chat_cli
+        from services.chat_assistant import run_chat_cli
         run_chat_cli()
 
     elif args.command == "ask":
-        from agents.chat_assistant import StockChatAssistant
+        from services.chat_assistant import StockChatAssistant
 
         print("Processing your question...")
         assistant = StockChatAssistant()
@@ -1417,6 +1433,14 @@ def main():
                 paper_dir=_settings.paper_trading_dir,
             )
             print_daily_report(report)
+
+    elif args.command == "research":
+        from agents.cli import run_research_cli
+        run_research_cli(question=args.question)
+
+    elif args.command == "trade":
+        from agents.cli import run_trade_cli
+        run_trade_cli(instruction=args.instruction)
 
     elif args.command == "backfill":
         print("Backfilling historical price data...")

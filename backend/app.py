@@ -23,11 +23,11 @@ load_dotenv(ROOT_DIR / ".env")
 os.environ.setdefault("STOCK_RADAR_DISABLE_METRICS_SERVER", "1")
 
 from main import StockRadar  # noqa: E402
-from agents.chat_assistant import ChatMessage, StockChatAssistant  # noqa: E402
-from agents.fetcher import NewsItem, StockFetcher  # noqa: E402
-from agents.rag_retriever import RAGRetriever  # noqa: E402
-from agents.scorer import StockScorer  # noqa: E402
-from agents.storage import StockStorage  # noqa: E402
+from services.chat_assistant import ChatMessage, StockChatAssistant  # noqa: E402
+from services.fetcher import NewsItem, StockFetcher  # noqa: E402
+from services.rag_retriever import RAGRetriever  # noqa: E402
+from services.scorer import StockScorer  # noqa: E402
+from services.storage import StockStorage  # noqa: E402
 from metrics import ML_MODEL_LOADED, SYSTEM_UP, get_metrics_response  # noqa: E402
 
 from backend.auth import verify_backend_auth  # noqa: E402
@@ -38,6 +38,8 @@ from backend.schemas import (  # noqa: E402
     AnalyzeJobStatus,
     AskRequest,
     AskResponse,
+    ResearchRequest,
+    TradeRequest,
 )
 
 SYMBOL_RE = re.compile(r"^[A-Za-z0-9.\-^]{1,20}$")
@@ -660,6 +662,38 @@ def health() -> dict[str, Any]:
         "uptimeSeconds": round((now - started_at).total_seconds(), 3),
         "dependencies": dependencies,
     }
+
+
+# ── Agent SSE endpoints ──────────────────────────────────────────────────
+
+from fastapi.responses import StreamingResponse  # noqa: E402
+
+
+def _sse_stream(generator):
+    """Convert an agent event generator to SSE text/event-stream."""
+    import json as _json
+    for event in generator:
+        yield f"data: {_json.dumps(event, default=str)}\n\n"
+
+
+@api.post("/agent/research")
+def agent_research(payload: ResearchRequest):
+    from agents.research_agent import ResearchAgent
+    agent = ResearchAgent()
+    return StreamingResponse(
+        _sse_stream(agent.ask_stream(payload.question)),
+        media_type="text/event-stream",
+    )
+
+
+@api.post("/agent/trade")
+def agent_trade(payload: TradeRequest):
+    from agents.trading_agent import TradingAgent
+    agent = TradingAgent()
+    return StreamingResponse(
+        _sse_stream(agent.trade_stream(payload.instruction)),
+        media_type="text/event-stream",
+    )
 
 
 app.include_router(api)

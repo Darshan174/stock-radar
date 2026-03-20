@@ -9,7 +9,7 @@ Finnhub free tier: unlimited WebSocket connections, real-time US trades.
 No credit card required.
 
 Usage:
-    from agents.realtime import RealtimeManager
+    from services.realtime import RealtimeManager
 
     rt = RealtimeManager(finnhub_key="your_key")
     rt.subscribe(["AAPL", "MSFT", "GOOGL"])

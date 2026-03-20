@@ -22,7 +22,7 @@ try:
 except ImportError:
     TWELVEDATA_AVAILABLE = False
 
-from agents.usage_tracker import get_tracker
+from services.usage_tracker import get_tracker
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -1018,7 +1018,7 @@ class StockFetcher:
         # Try realtime WebSocket cache for instant quote
         rt_quote = None
         try:
-            from agents.realtime import get_realtime_manager
+            from services.realtime import get_realtime_manager
             rt = get_realtime_manager()
             rt_data = rt.get_latest(symbol)
             if rt_data and rt_data["age_ms"] < 60_000:  # fresh within 60s

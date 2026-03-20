@@ -339,7 +339,7 @@ class TestAnalyzerAlgoPredictionWiring:
                 mock_cfg.ml_model_path = v2_model_path
 
                 with patch("agents.analyzer.ML_AVAILABLE", True):
-                    from agents.analyzer import StockAnalyzer
+                    from services.analyzer import StockAnalyzer
                     analyzer = StockAnalyzer.__new__(StockAnalyzer)
                     # Minimal init
                     analyzer.available_models = []
@@ -392,7 +392,7 @@ class TestAnalyzerAlgoPredictionWiring:
                 mock_cfg.ml_model_path = v2_model_path
 
                 with patch("agents.analyzer.ML_AVAILABLE", True):
-                    from agents.analyzer import StockAnalyzer
+                    from services.analyzer import StockAnalyzer
                     analyzer = StockAnalyzer.__new__(StockAnalyzer)
                     analyzer.available_models = []
 

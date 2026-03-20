@@ -195,7 +195,7 @@ def stream_analysis_sse(
     })
 
     try:
-        from agents.fetcher import StockFetcher
+        from services.fetcher import StockFetcher
         from prompt_manager import prompt_manager
 
         fetcher = StockFetcher()

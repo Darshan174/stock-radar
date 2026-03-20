@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
     ChevronRight,
     ChevronDown,
@@ -17,14 +17,10 @@ import {
     Terminal,
     GitBranch,
     Server,
-    MessageSquare,
     TrendingUp,
     BarChart3,
-    Bell,
     Search,
     Settings,
-    Gauge,
-    DollarSign,
     Lock,
     LayoutGrid,
     Workflow,
@@ -56,6 +52,7 @@ const toc: TocItem[] = [
         children: [
             { id: "architecture-diagram", label: "Architecture Diagram" },
             { id: "design-philosophy", label: "Design Philosophy" },
+            { id: "runtime-flow", label: "Runtime Request Flows" },
         ],
     },
     {
@@ -75,6 +72,7 @@ const toc: TocItem[] = [
             { id: "fetcher", label: "StockFetcher" },
             { id: "analyzer", label: "StockAnalyzer" },
             { id: "storage", label: "StockStorage" },
+            { id: "search-types", label: "Search Types" },
             { id: "notifications", label: "NotificationManager" },
             { id: "scorer", label: "StockScorer" },
             { id: "chat", label: "ChatAssistant" },
@@ -100,6 +98,7 @@ const toc: TocItem[] = [
         icon: Settings,
         children: [
             { id: "config", label: "Configuration" },
+            { id: "config-reality", label: "Current Runtime Reality" },
             { id: "caching", label: "Caching Layer" },
             { id: "guardrails", label: "LLM Guardrails" },
             { id: "prompts", label: "Prompt Versioning" },
@@ -342,31 +341,26 @@ export default function DocsPage() {
     const [activeId, setActiveId] = useState("overview")
 
     // Intersection observer for active section highlighting
-    if (typeof window !== "undefined") {
-        // eslint-disable-next-line react-hooks/rules-of-hooks
-        const { useEffect } = require("react")
-        // eslint-disable-next-line react-hooks/rules-of-hooks
-        useEffect(() => {
-            const observer = new IntersectionObserver(
-                (entries) => {
-                    entries.forEach((entry) => {
-                        if (entry.isIntersecting) {
-                            setActiveId(entry.target.id)
-                        }
-                    })
-                },
-                { rootMargin: "-80px 0px -60% 0px", threshold: 0 }
-            )
+    useEffect(() => {
+        const observer = new IntersectionObserver(
+            (entries) => {
+                entries.forEach((entry) => {
+                    if (entry.isIntersecting) {
+                        setActiveId(entry.target.id)
+                    }
+                })
+            },
+            { rootMargin: "-80px 0px -60% 0px", threshold: 0 }
+        )
 
-            const ids = toc.flatMap((item) => [item.id, ...(item.children?.map((c) => c.id) || [])])
-            ids.forEach((id) => {
-                const el = document.getElementById(id)
-                if (el) observer.observe(el)
-            })
+        const ids = toc.flatMap((item) => [item.id, ...(item.children?.map((c) => c.id) || [])])
+        ids.forEach((id) => {
+            const el = document.getElementById(id)
+            if (el) observer.observe(el)
+        })
 
-            return () => observer.disconnect()
-        }, [])
-    }
+        return () => observer.disconnect()
+    }, [])
 
     return (
         <div className="flex gap-8 max-w-[1400px] mx-auto px-4 md:px-6 py-8">
@@ -460,34 +454,47 @@ export default function DocsPage() {
                     <SubSection id="architecture-diagram" title="Architecture Diagram">
                         <CodeBlock
                             language="text"
-                            code={`┌─────────────────────────────────────────────────────────────┐
-│                      USER INTERFACES                        │
-│  Next.js Dashboard  │  CLI Terminal  │  Slack/Telegram Bots │
-│         │                  │                  ▲              │
-│         ▼                  ▼                  │              │
-│     FastAPI            main.py ───────────────┘              │
-│     Backend            (CLI)                                 │
-│         └────────┬────────┘                                  │
-│                  ▼                                            │
-│  ┌─────────────────────────────────────────────────────┐     │
-│  │          STOCK RADAR — ORCHESTRATOR                  │     │
-│  │  1. Fetch → 2. Analyze → 3. Verify → 4. Store → 5. Alert │
-│  └──────┬──────────┬──────────┬──────────┬──────────┘  │     │
-│         │          │          │          │              │     │
-│   StockFetcher  StockAnalyzer  Storage  Notifications  │     │
-│   •TwelveData   •LLM Chain    •Supabase  •Slack        │     │
-│   •yFinance     •ML Model     •Cohere    •Telegram     │     │
-│   •Finnhub      •Scorer       •pgvector                │     │
-│   •Reddit API   •RAG                                   │     │
-│                                                         │     │
-│  ┌──── SUPPORTING ─────────────────────────────────┐   │     │
-│  │ Config │ Cache │ Guardrails │ Metrics │ Prompts  │   │     │
-│  └─────────────────────────────────────────────────┘   │     │
-│                                                         │     │
-│  ┌──── TRAINING / ML ──────────────────────────────┐   │     │
-│  │ Predictor │ Paper Trading │ Broker │ Risk │ Kill │   │     │
-│  └─────────────────────────────────────────────────┘   │     │
-└─────────────────────────────────────────────────────────────┘`}
+                            code={`┌──────────────────────────────────────────────────────────────────────┐
+│                               REQUESTS                               │
+│  Browser / Dashboard                CLI                Slack/Telegram │
+└──────────────┬───────────────────────┬───────────────────────────┬────┘
+               │                       │                           │
+               ▼                       ▼                           │
+      Next.js /api/* routes         main.py                        │
+               │                       │                           │
+               ▼                       │                           │
+      FastAPI backend (/v1/*)          │                           │
+               │                       │                           │
+               └──────────────┬────────┴───────────────────────────┘
+                              ▼
+                  StockRadar / ChatAssistant runtime
+                              │
+      ┌───────────────────────┼───────────────────────────┐
+      │                       │                           │
+      ▼                       ▼                           ▼
+ StockFetcher           RAG / Retrieval              Notifications
+ • Twelve Data          • Cohere embeddings          • Slack
+ • Yahoo Finance        • Supabase RPC search        • Telegram
+ • Finnhub              • pgvector cosine search
+ • Reddit/ApeWisdom     • Exact DB lookups
+      │                       │
+      └──────────────┬────────┘
+                     ▼
+              StockAnalyzer / Chat LLM
+              • Groq Llama 3.1 70B / 8B
+              • Z.AI GLM-4.7
+              • Gemini 2.5 Flash
+                     │
+                     ▼
+                   Storage
+              • Supabase/Postgres
+              • analysis/news/chat rows
+              • stored embeddings for future RAG
+              • pgvector indexes + SQL RPC functions
+┌──────────────────────────────────────────────────────────────────────┐
+│ The LLM writes the answer/analysis. The embedding model only creates │
+│ vectors so past records can be retrieved by meaning later.           │
+└──────────────────────────────────────────────────────────────────────┘`}
                         />
                     </SubSection>
 
@@ -506,6 +513,43 @@ export default function DocsPage() {
                                 immediate neighbor, never bypassing the hierarchy.
                             </InfoCard>
                         </div>
+                    </SubSection>
+
+                    <SubSection id="runtime-flow" title="Runtime Request Flows">
+                        <p className="text-sm text-muted-foreground mb-4">
+                            <strong className="text-foreground">Runtime</strong> means the code path that executes while a live
+                            request is being handled. In this codebase, that means a browser hit to a Next.js route, a backend
+                            job running in FastAPI, or a CLI command running <code className="text-green-400 text-xs">main.py</code>.
+                            It does <em>not</em> mean every config field or helper method that exists in the repo.
+                        </p>
+                        <DataTable
+                            headers={["Flow", "Entry Point", "Core Path", "What Actually Happens"]}
+                            rows={[
+                                ["Analyze stock", "/api/analyze", "Next.js → FastAPI job → StockRadar.analyze_stock()", "Fetch market data, optionally retrieve RAG context, run LLM analysis, store result + embedding, create signal + alert"],
+                                ["Chat ask", "/api/ask", "Next.js → FastAPI /v1/ask → StockChatAssistant.ask()", "Exact symbol lookups + semantic retrieval, then LLM answer generation, then chat history storage"],
+                                ["CLI analyze", "python main.py analyze ...", "CLI → StockRadar.analyze_stock()", "Same backend analysis pipeline without the web proxy layer"],
+                            ]}
+                        />
+                        <CodeBlock
+                            language="text"
+                            code={`ANALYZE REQUEST
+Browser → /api/analyze → backend /v1/analyze/jobs → background job
+→ StockRadar.analyze_stock()
+→ StockFetcher gets quote/history/fundamentals/news/social
+→ RAG retrieval tries semantic lookup of similar past records
+→ LLM writes the actual analysis JSON
+→ result stored in Supabase
+→ Cohere embedding generated for the stored analysis text
+→ future requests can retrieve that record semantically
+
+CHAT REQUEST
+Browser → /api/ask → backend /v1/ask → StockChatAssistant.ask()
+→ ensure data exists for detected symbols
+→ semantic retrieval of similar analyses/news/knowledge/chat
+→ exact lookups for latest analysis/news/indicators
+→ LLM writes the answer
+→ chat messages stored with embeddings for future retrieval`}
+                        />
                     </SubSection>
                 </Section>
 
@@ -555,7 +599,7 @@ export default function DocsPage() {
                                 {
                                     step: "2",
                                     title: "ANALYZE",
-                                    desc: "Retrieves RAG context (similar past analyses, signals, news by vector similarity). Builds a structured prompt — intraday includes social sentiment & real-time buzz; longterm includes 50+ fundamentals (valuation, profitability, growth, health, dividends, analyst consensus). Calls the LLM with fallback chain. RAG Validation grades the output (A-F) on faithfulness, relevancy, groundedness & temporal validity.",
+                                    desc: "Retrieves RAG context using semantic search over stored embeddings plus exact DB lookups where needed. Builds a structured prompt — intraday includes social sentiment & real-time buzz; longterm includes 50+ fundamentals (valuation, profitability, growth, health, dividends, analyst consensus). Calls the LLM fallback chain to write the actual analysis. RAG Validation grades the output (A-F) on faithfulness, relevancy, groundedness & temporal validity.",
                                     color: "text-purple-400",
                                 },
                                 {
@@ -567,7 +611,7 @@ export default function DocsPage() {
                                 {
                                     step: "4",
                                     title: "STORE",
-                                    desc: "Saves to Supabase: stock record, price data, indicators, analysis with vector embedding (Cohere), and actionable signals for tracking.",
+                                    desc: "Saves to Supabase: stock record, price data, indicators, analysis row, and a Cohere embedding of the analysis text for future semantic retrieval. Signals are stored separately for alerting and history.",
                                     color: "text-green-400",
                                 },
                                 {
@@ -671,6 +715,22 @@ export default function DocsPage() {
                             <code className="text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded text-xs">src/agents/analyzer.py</code> (1,202 lines)
                             — The senior analyst who reads all data, applies expertise, and delivers a recommendation.
                         </p>
+                        <h4 className="font-medium text-foreground text-sm mb-2">Inference Models vs Embedding Model</h4>
+                        <DataTable
+                            headers={["Role", "Used By", "Default Runtime Model(s)", "What It Does"]}
+                            rows={[
+                                ["Inference model", "StockAnalyzer (analysis/algo)", "Groq Llama 3.1 70B → Z.AI GLM-4.7 → Gemini 2.5 Flash", "Writes the stock analysis, reasoning, targets, and structured JSON output"],
+                                ["Inference model", "ChatAssistant (chat)", "Groq Llama 3.1 70B → Z.AI GLM-4.7 → Gemini 2.5 Flash", "Writes the conversational answer after context is prepared"],
+                                ["Inference model", "News / sentiment tasks", "Groq Llama 3.1 8B Instant → Gemini 2.5 Flash → Z.AI GLM-4.7", "Handles lighter summarization/classification-style tasks"],
+                                ["Embedding model", "StockStorage / RAG", "Cohere embed-english-v3.0", "Turns text into vectors for semantic retrieval; it does not write the final analysis"],
+                                ["Embedding fallback", "Storage / search", "None if COHERE_API_KEY missing", "Semantic retrieval becomes empty, but exact lookups and LLM analysis still continue"],
+                            ]}
+                        />
+                        <p className="text-sm text-muted-foreground mt-2 mb-6">
+                            The key split is simple: <strong className="text-foreground">LLMs generate answers</strong>, while
+                            <strong className="text-foreground"> embeddings generate vectors</strong>. Vectors are used to find
+                            related records by meaning before or after the LLM call.
+                        </p>
                         <h4 className="font-medium text-foreground text-sm mb-2">Task-Based Model Routing</h4>
                         <DataTable
                             headers={["Task", "Model 1 (Primary)", "Model 2", "Model 3"]}
@@ -740,17 +800,43 @@ export default function DocsPage() {
                                 ["stocks", "Master stock list", "No"],
                                 ["watchlist", "User's tracked stocks", "No"],
                                 ["price_history", "Historical OHLCV data", "No"],
-                                ["analyses", "AI analysis results + embeddings", "✓ pgvector"],
-                                ["signals", "Actionable trading signals", "No"],
+                                ["analysis", "AI analysis results + embeddings", "✓ pgvector"],
+                                ["signals", "Actionable trading signals + context embeddings", "✓ pgvector"],
                                 ["alerts", "Notification delivery records", "No"],
                                 ["news", "Stored news articles + embeddings", "✓ pgvector"],
-                                ["knowledge", "RAG knowledge base", "✓ pgvector"],
+                                ["chat_history", "Stored chat turns + embeddings", "✓ pgvector"],
+                                ["knowledge_base", "RAG knowledge base", "✓ pgvector"],
                             ]}
                         />
                         <InfoCard icon={Search} title="Vector Embeddings — Semantic Search" variant="blue">
-                            When storing an analysis, Cohere generates a 1024-dimensional vector representation of its meaning.
-                            Later, when asking &quot;show me stocks with similar patterns&quot;, the system finds analyses that are
-                            <em> meaningfully similar</em> — not just keyword-matching. This powers the RAG system.
+                            At runtime, analyses, signals, news, chat turns, and knowledge entries are embedded with the configured
+                            provider. By default, the app uses Cohere
+                            (<code className="text-green-400 text-xs">embed-english-v3.0</code>) and stores 1024-dimensional vectors
+                            in Postgres/pgvector. Later, a query is embedded too, and Postgres/pgvector compares vector similarity so the app can find
+                            records that are <em>meaningfully similar</em>, not just exact text matches.
+                        </InfoCard>
+                    </SubSection>
+
+                    <SubSection id="search-types" title="Search Types Used In The App">
+                        <p className="text-muted-foreground text-sm mb-4">
+                            The app does <strong className="text-foreground">not</strong> use one single search strategy. It mixes
+                            exact lookups, recency queries, filters, and semantic search depending on the job.
+                        </p>
+                        <DataTable
+                            headers={["Search Type", "Example In Stock Radar", "Backed By", "Why It Exists"]}
+                            rows={[
+                                ["Exact lookup", "Find stock row by symbol", "SQL equality filter", "Reliable identity lookup; best when you know the exact key"],
+                                ["Recency lookup", "Latest analysis / recent news", "ORDER BY created_at / published_at", "Gives the freshest known state"],
+                                ["Filter search", "Mode=user=symbol=sentiment constraints", "SQL WHERE clauses", "Structured retrieval by known metadata"],
+                                ["Semantic search", "Similar analyses / signals / news / knowledge by meaning", "Configured embedding provider + pgvector cosine similarity", "Finds related content even when wording differs"],
+                                ["Hybrid search", "Not fully implemented in the core path yet", "Would combine exact/keyword + semantic", "Usually the most robust search pattern for production RAG systems"],
+                            ]}
+                        />
+                        <InfoCard icon={Database} title="Semantic Search vs Exact Search" variant="amber">
+                            Exact search answers questions like &quot;give me the row where symbol = AAPL&quot;.
+                            Semantic search answers questions like &quot;give me records that mean something similar to
+                            &apos;bullish breakout after earnings&apos;&quot;. Chat uses both: exact symbol lookups for the latest
+                            stored facts, and semantic retrieval for historical context.
                         </InfoCard>
                     </SubSection>
 
@@ -791,9 +877,19 @@ export default function DocsPage() {
                     <SubSection id="chat" title="ChatAssistant — The Conversationalist">
                         <p className="text-muted-foreground text-sm mb-4">
                             <code className="text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded text-xs">src/agents/chat_assistant.py</code> (1,052 lines)
-                            — RAG-powered conversational assistant. Before answering, it searches the database for relevant
-                            historical analyses, signals, and news to ground its response in real data.
+                            — RAG-powered conversational assistant. Before answering, it performs two retrieval passes:
+                            semantic search for similar historical context, and exact symbol lookups for the latest stored facts.
                         </p>
+                        <CodeBlock
+                            language="text"
+                            code={`1. Detect symbols from the question
+2. Ensure local data exists for those symbols
+3. Run semantic retrieval across analyses/news/knowledge/chat
+4. Run exact lookups for latest analysis, indicators, and recent news
+5. Build one prompt containing both direct facts and RAG context
+6. Call chat LLM route
+7. Store user + assistant chat turns with embeddings for future retrieval`}
+                        />
                     </SubSection>
 
                     {/* 4.7 RAG */}
@@ -801,13 +897,18 @@ export default function DocsPage() {
                         <p className="text-muted-foreground text-sm mb-4">
                             <strong className="text-foreground">RAGRetriever</strong>{" "}
                             <code className="text-green-400 bg-green-500/10 px-1 rounded text-xs">rag_retriever.py</code> — Searches
-                            similar past analyses, historical signals, related news, and correlated stock signals by vector similarity.
+                            similar past analyses, signals, related news, knowledge entries, and chat history by vector similarity.
                         </p>
                         <p className="text-muted-foreground text-sm mb-4">
                             <strong className="text-foreground">RAGValidator</strong>{" "}
                             <code className="text-green-400 bg-green-500/10 px-1 rounded text-xs">rag_validator.py</code> — RAGAS-style
                             metrics: Faithfulness, Context Relevancy, Groundedness, Temporal Validity. Each analysis gets a letter grade (A-F).
                         </p>
+                        <InfoCard icon={Workflow} title="Current Analysis-Time Retrieval" variant="blue">
+                            The analyzer now builds its retrieval query from the live market state, including RSI, MACD, price,
+                            and change%. That gives the RAG lookup a more specific semantic query than a generic
+                            <code className="text-green-400 text-xs"> AAPL intraday analysis</code> string and makes past-context retrieval more relevant.
+                        </InfoCard>
                     </SubSection>
 
                     {/* 4.8 Realtime */}
@@ -900,6 +1001,26 @@ export default function DocsPage() {
                         </p>
                     </SubSection>
 
+                    <SubSection id="config-reality" title="Current Runtime Reality">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <InfoCard icon={Brain} title="What Is Wired Through Settings" variant="green">
+                                LLM routing is genuinely controlled through settings and env vars:
+                                fallback order, task routes, API keys, guardrails, and most runtime toggles.
+                            </InfoCard>
+                            <InfoCard icon={Search} title="What Still Needs Care" variant="amber">
+                                Embedding provider, model, and dimension are now runtime-configurable through settings and env vars.
+                                The remaining hard boundary is the database schema:
+                                vector columns and RPC functions are still sized for
+                                <code className="text-green-400 text-xs"> 1024</code>-dimensional vectors unless you run a wider-schema migration.
+                            </InfoCard>
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-4">
+                            In practice, the runtime is now provider-aware for embeddings as well as LLMs.
+                            The main remaining operational constraint is keeping the configured embedding dimension aligned
+                            with the pgvector schema used in Supabase.
+                        </p>
+                    </SubSection>
+
                     <SubSection id="caching" title="Caching Strategy">
                         <p className="text-sm text-muted-foreground">
                             The standalone <code className="text-green-400 text-xs">cache.py</code> module was removed.
@@ -988,7 +1109,7 @@ export default function DocsPage() {
                         ]}
                     />
                     <p className="text-sm text-muted-foreground mt-2">
-                        Auth via Bearer token (<code className="text-green-400 text-xs">BACKEND_AUTH_TOKEN</code>) on all <code className="text-green-400 text-xs">/v1/</code> routes.
+                        Auth via <code className="text-green-400 text-xs">X-Backend-Api-Key</code> using <code className="text-green-400 text-xs">BACKEND_API_KEY</code> on all <code className="text-green-400 text-xs">/v1/</code> routes.
                         Long-running analyses execute in background thread pools (max_workers=2, 30-min TTL).
                         Analysis payloads now include a <code className="text-green-400 text-xs">guardrails</code> key with pass/fail status and issue details.
                     </p>
@@ -997,46 +1118,64 @@ export default function DocsPage() {
                 {/* ═══ 8. PIPELINE WALKTHROUGH ═══ */}
                 <Section id="pipeline-walkthrough" title="Full Pipeline Walkthrough" icon={GitBranch}>
                     <p className="text-muted-foreground text-sm mb-4">
-                        Here&apos;s the complete journey when a user enters &quot;AAPL&quot; in the dashboard:
+                        Here are the two main runtime journeys: <strong className="text-foreground">analyze</strong> and
+                        <strong className="text-foreground"> chat</strong>. These are the real request flows that execute while the app is live.
                     </p>
-                    <CodeBlock
-                        language="text"
-                        code={`1. Frontend → POST /v1/analyze {symbol: "AAPL", mode: "intraday"}
-2. Backend creates background job, returns job_id
-3. StockRadar.analyze_stock("AAPL") called
-4. _resolve_analysis_history_config("intraday") → 5d, 15m bars
-5. PARALLEL FETCH (up to 6 workers):
-   • WebSocket cache check → instant if < 60s fresh
-   • get_quote → StockQuote
-   • get_price_history("5d","15m") → [PriceData × 960]
-   • get_fundamentals → {50+ metrics: valuation, growth, ...}
-   • get_news_yahoo → [NewsItem × 10]
-   • get_news_finnhub → [NewsItem × 15]
-   • get_sentiment_finnhub → {bullish:30, bearish:5, ...}
-6. calculate_indicators → RSI=62, MACD=15.5, SMA20=2800
-7. get_social_sentiment → {reddit_mentions: 342}
-8. analyzer.analyze_intraday():
-   a. RAG context: past analyses + signals + news (vector similarity)
-   b. Build prompt: price + technicals + news + social + RAG
-   c. LLM call: Groq Llama 70B → ✓ 1.2s
-   d. Parse JSON → Signal=BUY, Confidence=0.75
-   e. RAG Validation → Faithfulness=0.85, Grade=B+, Temporal=✓
-9. generate_algo_prediction():
-   a. RegimeAwarePredictor → regime-specific model
-      predict(indicators + OHLCV + headlines + timestamps
-              + finnhub_sentiment) [37+ features]
-      → signal=buy, confidence=0.72
-   b. StockScorer → M=65, V=55, Q=70, R=4
-      (with per-indicator score_breakdowns)
-   c. Market regime → "neutral" (confidence=0.6)
-   d. Position size → 2.5% of portfolio
-   e. Stop/Take (ATR) → SL=$178.50, TP=$195.00
-   f. Per-trade risk → 1.8% ✓ within 2% limit
-10. Paper trading (kill switch → canary → risk → order)
-11. Storage: analysis + embedding saved to Supabase
-12. Alerts: Slack + Telegram notifications sent
-13. Frontend polls job → renders signal, scores, breakdowns`}
-                    />
+                    <SubSection id="analyze-walkthrough" title="Analyze Request Lifecycle">
+                        <p className="text-sm text-muted-foreground mb-4">
+                            The analyze path is intentionally <strong className="text-foreground">asynchronous</strong>. The browser does not sit on one long
+                            request while market data is fetched, indicators are computed, RAG context is retrieved, the LLM runs, guardrails validate the
+                            output, and Supabase writes complete. Instead, the web layer creates a background job and the UI polls for the final result.
+                        </p>
+                        <DataTable
+                            headers={["Stage", "What Happens Technically", "Why It Exists"]}
+                            rows={[
+                                ["1. Browser -> Next.js route", "The dashboard sends POST /api/analyze with symbol, mode, and period. The route validates symbol shape, enforces allowed modes, normalizes the requested period, and applies route-level rate limiting before any backend call is made.", "This stops malformed or abusive requests early and keeps the browser-facing contract stable."],
+                                ["2. Next.js -> backend job creation", "The route proxies the request to POST /v1/analyze/jobs using the backend API key header. FastAPI validates again and hands the work to the background job manager, which immediately returns HTTP 202 with a job id.", "Analysis is too heavy for a single synchronous browser request. Returning a queued job avoids timeouts and gives the UI something concrete to poll."],
+                                ["3. Worker enters StockRadar", "A background worker calls StockRadar.analyze_stock(symbol, mode, period). This orchestration method decides what data must be fetched, which analyzer path should run, and which downstream side effects such as alerts or persistence should happen.", "The API layer stays thin; the business workflow lives in one orchestration entrypoint."],
+                                ["4. Data acquisition", "The fetch layer gathers current quote data, historical OHLCV series, fundamentals, news, and social sentiment. Structured data and unstructured text are both collected because later stages use both numeric market state and textual context.", "The LLM is grounded in fetched market data instead of being asked to infer the state of the market from its own prior knowledge."],
+                                ["5. Indicator computation", "Historical prices are transformed into RSI, MACD, moving averages, Bollinger bands, price-vs-SMA deltas, and related features. These values are deterministic derivatives of the fetched history, not model output.", "Indicators compress raw time series into signals the prompt, scorer, and downstream logic can use directly."],
+                                ["6. RAG lookup", "Before fresh analysis is generated, the analyzer builds a semantic query from the live state, including symbol, mode, RSI, MACD, price, and percentage change. The storage layer embeds that query and calls Supabase RPC functions backed by pgvector to retrieve similar analyses, signals, news, and other stored context.", "This gives the LLM historical precedent and prior context instead of making every decision from a cold start."],
+                                ["7. Prompt assembly and LLM inference", "The analyzer merges quote data, indicators, news headlines, social sentiment, and formatted RAG context into a task-specific prompt. LiteLLM then routes the request through the configured provider fallback order until one model returns a valid response.", "This is the actual inference step. The LLM writes the analysis; the embedding system only supplies retrieval context."],
+                                ["8. Parsing and guardrails", "The raw model text is parsed as JSON and passed through guardrails that check schema shape, allowed signal values, confidence ceilings, price sanity, and reasoning completeness. If RAG context was used, a validator can also score the quality and grounding of the retrieved context.", "This reduces malformed outputs and obvious hallucinations before the result is treated as product data."],
+                                ["9. Post-analysis processing", "Once the analysis passes validation, the app can run algorithmic scoring, risk checks, paper-trading hooks, and alert generation. These steps are deterministic or rule-based layers that enrich or gate the generated analysis.", "The product combines LLM output with explicit trading controls rather than trusting the model alone."],
+                                ["10. Persistence and semantic memory", "The final analysis row is stored in Supabase, the analysis text is embedded for future similarity search, and an actionable signal row is written with its own context embedding. Those writes become part of the corpus used by later RAG retrieval.", "Every completed analysis makes the system's memory richer for future runs."],
+                                ["11. Polling and render", "The frontend polls the analyze-status endpoint using the returned job id. When the worker finishes, the final payload includes the analysis result and related metadata, which the UI renders into the dashboard.", "Submission and completion are decoupled so the UX stays responsive while the heavy work runs in the background."],
+                            ]}
+                        />
+                        <InfoCard icon={Workflow} title="Why Analysis Is A Background Job" variant="blue">
+                            The expensive parts of this path are external I/O and model work: fetching history, retrieving vector matches,
+                            waiting for LLM output, and writing multiple DB records. The job pattern isolates those latencies from the browser
+                            request and makes retries, polling, and user refreshes much easier to handle.
+                        </InfoCard>
+                    </SubSection>
+
+                    <SubSection id="chat-walkthrough" title="Chat Request Lifecycle">
+                        <p className="text-sm text-muted-foreground mb-4">
+                            The chat path is usually synchronous, but it still executes several internal stages before answering. The assistant does not
+                            just hand the question straight to an LLM. It restores session context, resolves symbols, gathers direct facts, retrieves
+                            semantically similar records, and only then asks the model to produce a response.
+                        </p>
+                        <DataTable
+                            headers={["Stage", "What Happens Technically", "Why It Exists"]}
+                            rows={[
+                                ["1. Browser -> Next.js chat route", "The browser sends POST /api/ask with a question, optional stock symbol, and optional session id. The route rate-limits the request, trims inputs, rejects empty questions, and proxies the normalized payload to POST /v1/ask.", "This enforces a predictable request shape and prevents obvious bad input from reaching the backend."],
+                                ["2. Session restoration", "If a valid session id is supplied, the backend reloads recent conversation turns from chat_history and reconstructs the assistant's in-memory conversation state. If not, it creates a fresh session.", "Multi-turn chat needs continuity. Otherwise the assistant would lose all prior context between requests."],
+                                ["3. Symbol grounding and data hydration", "The assistant validates or infers relevant stock symbols and ensures the app has local data for them. If the user asks about AAPL, the system tries to ground the answer in the app's own stored records instead of generic model memory.", "This is what makes the assistant a stock-radar interface rather than a general-purpose chat wrapper."],
+                                ["4. Semantic retrieval", "The question is embedded and used to query analyses, signals, news, knowledge entries, and prior conversations through vector similarity. This returns records that are conceptually related, even when their wording does not exactly match the user's phrasing.", "Semantic retrieval is how the assistant finds relevant history and precedent."],
+                                ["5. Exact retrieval", "Alongside vector search, the assistant fetches precise structured facts such as the stock row, latest analysis, indicator-bearing records, and recent news by symbol and recency filters.", "Exact lookup is better than semantic similarity when the goal is to surface the freshest known facts without approximation."],
+                                ["6. Prompt assembly", "The assistant composes a grounded prompt that includes the user's question, prior session turns, exact factual context, and semantically related context. The prompt deliberately mixes both direct facts and broader retrieved memory.", "The model gets both the latest state and historical context in one place, which leads to more specific answers."],
+                                ["7. LLM answer generation", "LiteLLM calls the configured chat model route and returns answer text plus metadata such as model used, token count, and processing time. If the primary provider fails, the fallback order is tried.", "This is the generation step where all the retrieved context is turned into a final answer."],
+                                ["8. Persistence of conversation state", "The user turn and assistant turn are both written to Supabase and embedded. That means future chat requests can retrieve prior conversation snippets semantically as part of context building.", "Chat memory becomes searchable product data rather than transient session state."],
+                                ["9. Response contract back to the UI", "The backend returns the answer, referenced stock symbols, source summaries, model metadata, session id, and retrieval metrics such as total results and retrieval time.", "The frontend can show not just the answer but also how much context was found and which sources informed it."],
+                            ]}
+                        />
+                        <InfoCard icon={Database} title="Why Chat Uses Exact And Semantic Retrieval" variant="amber">
+                            Exact lookup answers questions like &quot;what is the latest stored analysis for AAPL?&quot;.
+                            Semantic retrieval answers questions like &quot;what past situations are meaningfully similar to this one?&quot;.
+                            The assistant uses both because a finance workflow needs fresh facts and relevant precedent.
+                        </InfoCard>
+                    </SubSection>
                 </Section>
 
                 {/* ═══ 9. CLI ═══ */}
@@ -1095,7 +1234,7 @@ python main.py test`}
                             },
                             {
                                 q: "Why Cohere for embeddings?",
-                                a: "High-quality 1024-dim vectors, generous free tier (1,000 calls/month), and specifically designed for search/retrieval use cases.",
+                                a: "Cohere is still the default, but the runtime is now configurable through EMBEDDING_PROVIDER, EMBEDDING_MODEL, and EMBEDDING_DIM. The database schema currently expects 1024-dimensional pgvector columns, so alternative providers should either output 1024-d vectors or be paired with a schema migration.",
                             },
                             {
                                 q: "Why paper trading before live?",

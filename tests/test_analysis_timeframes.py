@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from agents.fetcher import StockFetcher
+from services.fetcher import StockFetcher
 
 
 def test_intraday_defaults_to_recent_higher_frequency_bars():
