@@ -199,10 +199,22 @@ Rules:
         self.session_id: Optional[str] = None
         self.conversation_history: List[ChatMessage] = []
 
+        # LLM timeout from config
+        self.llm_timeout_sec = (
+            getattr(settings, "llm_timeout_sec", 60) if settings else 60
+        )
+
+        # Circuit breaker per model
+        self._model_failures: dict[str, int] = {}
+        self._model_open_until: dict[str, float] = {}
+        self.CIRCUIT_BREAKER_THRESHOLD = 3
+        self.CIRCUIT_BREAKER_COOLDOWN_SEC = 120
+
         logger.info(
-            "StockChatAssistant initialized with models=%s task_routes=%s",
+            "StockChatAssistant initialized with models=%s task_routes=%s timeout=%ds",
             self.available_models,
             sorted(self.task_routes.keys()),
+            self.llm_timeout_sec,
         )
 
     def _model_is_available(self, model: str) -> bool:
@@ -616,18 +628,25 @@ Rules:
 
         last_error = None
         failed_models: list[str] = []
+        now = time.time()
 
         for model in models:
+            # Circuit breaker: skip models in cooldown
+            open_until = self._model_open_until.get(model, 0)
+            if open_until > now:
+                logger.info(f"Skipping {model} (circuit open for {open_until - now:.0f}s more)")
+                continue
+
             started_at = time.time()
             try:
                 logger.info(f"Trying model for task={task}: {model}")
 
-                # Pass api_base and api_key for ZAI (OpenAI-compatible endpoint)
                 kwargs = dict(
                     model=model,
                     messages=messages,
                     temperature=temperature,
                     max_tokens=2500,
+                    timeout=self.llm_timeout_sec,
                 )
                 if model.startswith("openai/") and self.zai_key:
                     kwargs["api_base"] = self.zai_api_base
@@ -653,6 +672,10 @@ Rules:
                 if failed_models:
                     LLM_FALLBACK.labels(from_model=failed_models[-1], to_model=model).inc()
 
+                # Success — reset circuit breaker
+                self._model_failures.pop(model, None)
+                self._model_open_until.pop(model, None)
+
                 logger.info(f"Success with {model} ({tokens} tokens)")
                 return content, model, tokens
 
@@ -661,7 +684,16 @@ Rules:
                 failed_models.append(model)
                 if accountant:
                     accountant.record_llm_error(model)
-                logger.warning(f"{model} failed: {e}")
+
+                failures = self._model_failures.get(model, 0) + 1
+                self._model_failures[model] = failures
+                if failures >= self.CIRCUIT_BREAKER_THRESHOLD:
+                    self._model_open_until[model] = time.time() + self.CIRCUIT_BREAKER_COOLDOWN_SEC
+                    logger.warning(
+                        f"{model} failed {failures}x — circuit open for {self.CIRCUIT_BREAKER_COOLDOWN_SEC}s"
+                    )
+                else:
+                    logger.warning(f"{model} failed ({failures}/{self.CIRCUIT_BREAKER_THRESHOLD}): {e}")
                 continue
 
         raise Exception(f"All models failed. Last error: {last_error}")

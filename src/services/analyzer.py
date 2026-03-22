@@ -236,12 +236,26 @@ class StockAnalyzer:
         )
         ML_MODEL_LOADED.set(1 if ml_model_loaded else 0)
 
+        # LLM timeout budget from config
+        self.llm_timeout_sec = (
+            getattr(_cfg, "llm_timeout_sec", 60) if _cfg else 60
+        )
+
+        # Circuit breaker: track consecutive failures per model.
+        # After CIRCUIT_BREAKER_THRESHOLD failures, skip the model for
+        # CIRCUIT_BREAKER_COOLDOWN_SEC seconds.
+        self._model_failures: dict[str, int] = {}
+        self._model_open_until: dict[str, float] = {}
+        self.CIRCUIT_BREAKER_THRESHOLD = 3
+        self.CIRCUIT_BREAKER_COOLDOWN_SEC = 120
+
         logger.info(
-            "StockAnalyzer initialized with models=%s task_routes=%s RAG=%s guardrails=%s",
+            "StockAnalyzer initialized with models=%s task_routes=%s RAG=%s guardrails=%s timeout=%ds",
             self.available_models,
             sorted(self.task_routes.keys()),
             self.enable_rag,
             bool(self.guardrail_engine),
+            self.llm_timeout_sec,
         )
 
     def _model_is_available(self, model: str) -> bool:
@@ -301,7 +315,14 @@ class StockAnalyzer:
 
         last_error = None
         failed_models: list[str] = []
+        now = time.time()
         for model in models:
+            # Circuit breaker: skip models that have failed too many times recently
+            open_until = self._model_open_until.get(model, 0)
+            if open_until > now:
+                logger.info(f"Skipping {model} (circuit open for {open_until - now:.0f}s more)")
+                continue
+
             started_at = time.time()
             try:
                 logger.info(f"Trying model for task={task}: {model}")
@@ -312,6 +333,7 @@ class StockAnalyzer:
                     messages=messages,
                     temperature=0.3,
                     max_tokens=2000,
+                    timeout=self.llm_timeout_sec,
                 )
                 if model.startswith("openai/") and self.zai_key:
                     kwargs["api_base"] = self.zai_api_base
@@ -345,6 +367,11 @@ class StockAnalyzer:
                     )
                 if failed_models:
                     LLM_FALLBACK.labels(from_model=failed_models[-1], to_model=model).inc()
+                    logger.info("EVAL event=fallback_used from=%s to=%s", failed_models[-1], model)
+
+                # Success — reset circuit breaker for this model
+                self._model_failures.pop(model, None)
+                self._model_open_until.pop(model, None)
 
                 logger.info(f"Success with {model} ({tokens} tokens)")
                 return content, model, tokens
@@ -354,7 +381,17 @@ class StockAnalyzer:
                 failed_models.append(model)
                 if accountant:
                     accountant.record_llm_error(model)
-                logger.warning(f"{model} failed: {e}")
+
+                # Increment circuit breaker
+                failures = self._model_failures.get(model, 0) + 1
+                self._model_failures[model] = failures
+                if failures >= self.CIRCUIT_BREAKER_THRESHOLD:
+                    self._model_open_until[model] = time.time() + self.CIRCUIT_BREAKER_COOLDOWN_SEC
+                    logger.warning(
+                        f"{model} failed {failures}x — circuit open for {self.CIRCUIT_BREAKER_COOLDOWN_SEC}s"
+                    )
+                else:
+                    logger.warning(f"{model} failed ({failures}/{self.CIRCUIT_BREAKER_THRESHOLD}): {e}")
                 continue
 
         raise Exception(f"All models failed. Last error: {last_error}")
@@ -442,9 +479,30 @@ class StockAnalyzer:
             return default
 
     @staticmethod
-    def _record_analysis_metrics(mode: str, signal: str, confidence: float) -> None:
+    def _record_analysis_metrics(
+        mode: str,
+        signal: str,
+        confidence: float,
+        model_used: str = "",
+        guardrail_result: Optional[Dict] = None,
+        rag_validation_result: Optional[Dict] = None,
+    ) -> None:
         ANALYSIS_CONFIDENCE.observe(confidence)
         ANALYSIS_SIGNAL.labels(signal=signal, mode=mode).inc()
+
+        # Structured eval log line — greppable serving-time quality trace.
+        # `grep EVAL` shows every analysis decision; filter by field to debug.
+        logger.info(
+            "EVAL signal=%s confidence=%.2f mode=%s model=%s guardrail_pass=%s guardrail_errors=%s rag_grade=%s rag_score=%s",
+            signal,
+            confidence,
+            mode,
+            model_used or "unknown",
+            guardrail_result.get("passed") if guardrail_result else "n/a",
+            guardrail_result.get("error_count", 0) if guardrail_result else "n/a",
+            rag_validation_result.get("quality_grade", "n/a") if rag_validation_result else "n/a",
+            rag_validation_result.get("overall_score", "n/a") if rag_validation_result else "n/a",
+        )
 
     def _extract_json(self, text: str) -> Optional[Dict]:
         """Extract JSON from LLM response."""
@@ -674,7 +732,12 @@ Respond with JSON only:"""
             llm_meta = accountant.get_request_meta()
             signal = self._normalize_signal(analysis.get("signal", "hold"))
             confidence = self._normalize_confidence(analysis.get("confidence", 0.5))
-            self._record_analysis_metrics("intraday", signal.value, confidence)
+            self._record_analysis_metrics(
+                "intraday", signal.value, confidence,
+                model_used=model_used,
+                guardrail_result=guardrail_result,
+                rag_validation_result=rag_validation_result,
+            )
 
             return AnalysisResult(
                 symbol=symbol,
@@ -856,7 +919,12 @@ Respond with JSON only:"""
             llm_meta = accountant.get_request_meta()
             signal = self._normalize_signal(analysis.get("signal", "hold"))
             confidence = self._normalize_confidence(analysis.get("confidence", 0.5))
-            self._record_analysis_metrics("longterm", signal.value, confidence)
+            self._record_analysis_metrics(
+                "longterm", signal.value, confidence,
+                model_used=model_used,
+                guardrail_result=guardrail_result,
+                rag_validation_result=rag_validation_result,
+            )
 
             return AnalysisResult(
                 symbol=symbol,

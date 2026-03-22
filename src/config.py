@@ -130,6 +130,7 @@ class Settings(BaseSettings):
     cache_embedding_ttl_sec: int = Field(
         default=86400, alias="CACHE_EMBEDDING_TTL_SEC"
     )
+    cache_sentiment_ttl_sec: int = Field(default=300, alias="CACHE_SENTIMENT_TTL_SEC")
 
     # -------------------------------------------------------------------------
     # Metrics

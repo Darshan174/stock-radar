@@ -27,24 +27,13 @@ import {
   type AnalysisMode,
 } from "@/lib/analysis-mode"
 import { supabase, Stock } from "@/lib/supabase"
+import { pollAnalyzeJob } from "@/lib/poll-job"
 
 interface StockWithPrice extends Stock {
   latest_price?: number
   price_change?: number
   sparkline_data?: { time: string; value: number }[]
   analysis_count: number
-}
-
-interface IntradayApiResponse {
-  candles?: Array<{
-    open: number
-    close: number
-  }>
-  meta?: {
-    regularMarketPrice?: number
-    previousClose?: number
-    chartPreviousClose?: number
-  }
 }
 
 type AnalyzeFeedbackState = "queued" | "running" | "succeeded" | "failed"
@@ -81,68 +70,11 @@ export default function StocksPage() {
     setSelectedMode(loadStoredAnalysisMode())
   }, [])
 
-  async function fetchQuoteSnapshot(symbol: string): Promise<Pick<StockWithPrice, "latest_price" | "price_change"> | null> {
-    const response = await fetch(`/api/intraday?symbol=${encodeURIComponent(symbol)}&interval=5m&range=1d`, {
-      cache: "no-store",
-    })
 
-    if (!response.ok) return null
-
-    const data = (await response.json()) as IntradayApiResponse
-    const candles = Array.isArray(data.candles) ? data.candles : []
-    const lastClose = candles.length > 0 ? candles[candles.length - 1].close : undefined
-    const metaPrice = data.meta?.regularMarketPrice
-    const latestPrice = hasNumber(lastClose) ? lastClose : hasNumber(metaPrice) ? metaPrice : undefined
-
-    if (!hasNumber(latestPrice)) return null
-
-    const previousClose = data.meta?.previousClose ?? data.meta?.chartPreviousClose
-    let priceChange: number | undefined
-
-    if (hasNumber(previousClose) && previousClose > 0) {
-      priceChange = ((latestPrice - previousClose) / previousClose) * 100
-    } else if (candles.length > 0) {
-      const sessionOpen = candles[0].open
-      if (hasNumber(sessionOpen) && sessionOpen > 0) {
-        priceChange = ((latestPrice - sessionOpen) / sessionOpen) * 100
-      }
-    }
-
-    return {
-      latest_price: latestPrice,
-      price_change: hasNumber(priceChange) ? priceChange : undefined,
-    }
-  }
-
-  async function waitForAnalyzeJob(jobId: string, timeoutMs = 180000) {
-    const startedAt = Date.now()
-
-    while (Date.now() - startedAt < timeoutMs) {
-      const statusResponse = await fetch(`/api/analyze/status?jobId=${encodeURIComponent(jobId)}`, {
-        cache: "no-store",
-      })
-      const statusData = await statusResponse.json()
-
-      if (!statusResponse.ok) {
-        throw new Error(statusData.error || "Failed to fetch analysis status")
-      }
-
-      if (statusData.status === "succeeded") {
-        return statusData
-      }
-
-      if (statusData.status === "failed") {
-        throw new Error(statusData.error || "Analysis failed")
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-    }
-
-    throw new Error("Analysis timed out. Please try again.")
-  }
 
   const fetchStocks = useCallback(async () => {
     try {
+      // 1. Fetch stocks + analysis counts + price history in parallel (3 queries total, not N)
       const { data: stocksData, error } = await supabase
         .from("stocks")
         .select("*")
@@ -153,87 +85,103 @@ export default function StocksPage() {
         return
       }
 
-      if (stocksData) {
-        const stockIds = stocksData.map((stock) => stock.id)
-        const analysisCounts = new Map<number, number>()
+      if (!stocksData || stocksData.length === 0) {
+        setStocks([])
+        return
+      }
 
-        if (stockIds.length > 0) {
-          const { data: analysesData } = await supabase
-            .from("analysis")
-            .select("stock_id")
-            .in("stock_id", stockIds)
+      const stockIds = stocksData.map((stock) => stock.id)
 
-          for (const analysis of analysesData || []) {
-            const currentCount = analysisCounts.get(analysis.stock_id) || 0
-            analysisCounts.set(analysis.stock_id, currentCount + 1)
+      // Batch: analysis counts + recent price history in 2 queries (not N+1)
+      const [analysisResult, priceResult] = await Promise.all([
+        supabase
+          .from("analysis")
+          .select("stock_id")
+          .in("stock_id", stockIds),
+        supabase
+          .rpc("recent_prices_for_stocks", {
+            stock_ids: stockIds,
+            limit_per_stock: 30,
+          }),
+      ])
+
+      // Count analyses per stock
+      const analysisCounts = new Map<number, number>()
+      for (const row of analysisResult.data || []) {
+        analysisCounts.set(row.stock_id, (analysisCounts.get(row.stock_id) || 0) + 1)
+      }
+
+      // Group price history by stock_id (already limited to 30 per stock by RPC)
+      const priceByStock = new Map<number, { close: number; timestamp: string }[]>()
+      for (const row of priceResult.data || []) {
+        const list = priceByStock.get(row.stock_id)
+        if (list) {
+          list.push(row)
+        } else {
+          priceByStock.set(row.stock_id, [row])
+        }
+      }
+
+      // 2. Build stocks with historical prices (no per-stock queries)
+      const stocksWithHistoricalPrices = stocksData.map((stock) => {
+        const priceData = priceByStock.get(stock.id) || []
+        let latest_price: number | undefined
+        let price_change: number | undefined
+        let sparkline_data: { time: string; value: number }[] = []
+
+        if (priceData.length > 0) {
+          const latestClose = priceData[0].close
+          if (typeof latestClose === "number" && Number.isFinite(latestClose)) {
+            latest_price = latestClose
           }
+          if (priceData.length > 1 && hasNumber(latest_price)) {
+            const prev = priceData[1].close
+            price_change = prev > 0 ? ((latest_price - prev) / prev) * 100 : 0
+          }
+          sparkline_data = [...priceData].reverse().map((p) => ({
+            time: p.timestamp.split("T")[0],
+            value: p.close,
+          }))
         }
 
-        // First, quickly load stocks with historical data
-        const stocksWithHistoricalPrices = await Promise.all(
-          stocksData.map(async (stock) => {
-            const { data: priceData } = await supabase
-              .from("price_history")
-              .select("close, timestamp")
-              .eq("stock_id", stock.id)
-              .order("timestamp", { ascending: false })
-              .limit(30)
+        return {
+          ...stock,
+          latest_price,
+          price_change,
+          sparkline_data,
+          analysis_count: analysisCounts.get(stock.id) || 0,
+        }
+      })
 
-            let latest_price: number | undefined
-            let price_change: number | undefined
-            let sparkline_data: { time: string; value: number }[] = []
+      // Show stocks immediately with historical prices
+      setStocks(stocksWithHistoricalPrices)
+      setLoading(false)
 
-            if (priceData && priceData.length > 0) {
-              const latestClose = priceData[0].close
-              if (typeof latestClose === "number" && Number.isFinite(latestClose)) {
-                latest_price = latestClose
+      // 3. Single batch fetch for live quotes (1 HTTP call, not N)
+      const symbols = stocksWithHistoricalPrices.map((s) => s.symbol).join(",")
+      try {
+        const res = await fetch(`/api/batch-quotes?symbols=${encodeURIComponent(symbols)}`, {
+          cache: "no-store",
+        })
+        if (res.ok) {
+          const { quotes } = (await res.json()) as {
+            quotes: Record<string, { latest_price: number; price_change?: number } | null>
+          }
+          const updatedStocks = stocksWithHistoricalPrices.map((stock) => {
+            const q = quotes[stock.symbol]
+            if (q) {
+              return {
+                ...stock,
+                latest_price: q.latest_price,
+                price_change: q.price_change ?? stock.price_change,
               }
-
-              if (priceData.length > 1 && hasNumber(latest_price)) {
-                const prev = priceData[1].close
-                price_change = prev > 0 ? ((latest_price - prev) / prev) * 100 : 0
-              }
-              sparkline_data = [...priceData].reverse().map((p) => ({
-                time: p.timestamp.split("T")[0],
-                value: p.close,
-              }))
-            }
-
-            return {
-              ...stock,
-              latest_price,
-              price_change,
-              sparkline_data,
-              analysis_count: analysisCounts.get(stock.id) || 0,
-            }
-          })
-        )
-
-        // Show stocks immediately with historical prices
-        setStocks(stocksWithHistoricalPrices)
-        setLoading(false)
-
-        // Then fetch live prices in background and update
-        const updatedStocks = await Promise.all(
-          stocksWithHistoricalPrices.map(async (stock) => {
-            try {
-              const quote = await fetchQuoteSnapshot(stock.symbol)
-              if (quote) {
-                return {
-                  ...stock,
-                  latest_price: quote.latest_price,
-                  price_change: quote.price_change ?? stock.price_change,
-                }
-              }
-            } catch (e) {
-              console.warn(`Failed to fetch quote snapshot for ${stock.symbol}:`, e)
             }
             return stock
           })
-        )
-
-        // Update with live prices
-        setStocks(updatedStocks)
+          setStocks(updatedStocks)
+        }
+      } catch (e) {
+        console.warn("Batch quote fetch failed:", e)
       }
     } catch (error) {
       console.error("Error:", error)
@@ -247,24 +195,33 @@ export default function StocksPage() {
     if (loading || stocks.length === 0) return
 
     const priceRefreshInterval = setInterval(async () => {
-      const updatedStocks = await Promise.all(
-        stocks.map(async (stock) => {
-          try {
-            const quote = await fetchQuoteSnapshot(stock.symbol)
-            if (quote) {
+      // Skip refresh when tab is hidden to avoid wasting rate-limit budget
+      if (document.hidden) return
+      const symbols = stocks.map((s) => s.symbol).join(",")
+      try {
+        const res = await fetch(`/api/batch-quotes?symbols=${encodeURIComponent(symbols)}`, {
+          cache: "no-store",
+        })
+        if (!res.ok) return
+        const { quotes } = (await res.json()) as {
+          quotes: Record<string, { latest_price: number; price_change?: number } | null>
+        }
+        setStocks((prev) =>
+          prev.map((stock) => {
+            const q = quotes[stock.symbol]
+            if (q) {
               return {
                 ...stock,
-                latest_price: quote.latest_price,
-                price_change: quote.price_change ?? stock.price_change,
+                latest_price: q.latest_price,
+                price_change: q.price_change ?? stock.price_change,
               }
             }
-          } catch {
-            // Ignore errors on refresh
-          }
-          return stock
-        })
-      )
-      setStocks(updatedStocks)
+            return stock
+          }),
+        )
+      } catch {
+        // Ignore errors on refresh
+      }
     }, 30000) // Refresh every 30 seconds
 
     return () => clearInterval(priceRefreshInterval)
@@ -323,7 +280,7 @@ export default function StocksPage() {
       }
 
       setSuccess(`${modeLabel} analysis queued for ${newSymbol.toUpperCase()}...`)
-      await waitForAnalyzeJob(data.jobId)
+      await pollAnalyzeJob(data.jobId)
 
       setSuccess(`Added ${newSymbol.toUpperCase()} with ${modeLabel} analysis.`)
       setNewSymbol("")
@@ -385,7 +342,7 @@ export default function StocksPage() {
         ...prev,
         [symbol]: { state: "running", message: `${modeLabel} analysis running...` },
       }))
-      await waitForAnalyzeJob(data.jobId)
+      await pollAnalyzeJob(data.jobId)
       setAnalyzeFeedback((prev) => ({
         ...prev,
         [symbol]: { state: "succeeded", message: `${modeLabel} analysis complete` },

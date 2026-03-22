@@ -16,14 +16,24 @@ const inMemoryCounters = new Map<string, CounterRecord>()
 function getClientIp(request: NextRequest): string {
   const forwarded = request.headers.get("x-forwarded-for")
   if (forwarded) {
-    return forwarded.split(",")[0]?.trim() || "unknown"
+    const first = forwarded.split(",")[0]?.trim()
+    if (first && first !== "unknown") return first
   }
 
-  return (
-    request.headers.get("cf-connecting-ip") ||
-    request.headers.get("x-real-ip") ||
-    "unknown"
-  )
+  const cfIp = request.headers.get("cf-connecting-ip")
+  if (cfIp) return cfIp
+
+  const realIp = request.headers.get("x-real-ip")
+  if (realIp) return realIp
+
+  // Local/dev: derive a key from the user-agent so different browsers
+  // don't collapse into one shared bucket.
+  const ua = request.headers.get("user-agent") || ""
+  let hash = 0
+  for (let i = 0; i < ua.length; i++) {
+    hash = ((hash << 5) - hash + ua.charCodeAt(i)) | 0
+  }
+  return `local-${hash.toString(36)}`
 }
 
 function shouldBypass(request: NextRequest): boolean {
@@ -139,7 +149,12 @@ export const RATE_BUCKETS = {
   },
   analyzeJobs: {
     key: "analyze-jobs",
-    limit: 3,
+    limit: 10,
+    windowSeconds: 60,
+  },
+  jobStatus: {
+    key: "job-status",
+    limit: 120,
     windowSeconds: 60,
   },
 } as const

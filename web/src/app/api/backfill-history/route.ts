@@ -86,8 +86,8 @@ export async function POST(request: NextRequest) {
         const pythonCode = `
 import sys
 sys.path.insert(0, "${projectPath}/src")
-from agents.fetcher import StockFetcher
-from agents.storage import StockStorage
+from services.fetcher import StockFetcher
+from services.storage import StockStorage
 
 fetcher = StockFetcher()
 storage = StockStorage()

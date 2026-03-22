@@ -3,6 +3,8 @@ import path from "node:path"
 
 import { NextResponse } from "next/server"
 
+const LOCAL_DEV_BACKEND_API_KEY = "stock-radar-local-dev-key"
+
 export class BackendProxyError extends Error {
   status: number
   detail?: string
@@ -19,7 +21,7 @@ function backendConfig() {
   const localFallback = loadLocalBackendFallback()
   const isProduction = process.env.NODE_ENV === "production"
 
-  const baseUrl =
+  const rawBaseUrl =
     process.env.PY_BACKEND_URL ||
     localFallback.PY_BACKEND_URL ||
     (!isProduction ? "http://localhost:8000" : undefined)
@@ -29,17 +31,24 @@ function backendConfig() {
     process.env.BACKEND_API_KEY ||
     localFallback.BACKEND_API_KEY
 
-  if (!baseUrl || !apiKey) {
+  const baseUrl = rawBaseUrl?.replace(/\/$/, "")
+  const allowLocalDevFallback =
+    !isProduction &&
+    !!baseUrl &&
+    isLoopbackBackendUrl(baseUrl)
+  const resolvedApiKey = apiKey || (allowLocalDevFallback ? LOCAL_DEV_BACKEND_API_KEY : undefined)
+
+  if (!baseUrl || !resolvedApiKey) {
     throw new BackendProxyError(
       "Python backend is not configured",
       503,
-      "Set PY_BACKEND_URL and PY_BACKEND_API_KEY, or define BACKEND_API_KEY in the repo root .env for local dev",
+      "Set PY_BACKEND_URL and PY_BACKEND_API_KEY, or run the backend on localhost to use the built-in dev key fallback",
     )
   }
 
   return {
-    baseUrl: baseUrl.replace(/\/$/, ""),
-    apiKey,
+    baseUrl,
+    apiKey: resolvedApiKey,
   }
 }
 
@@ -95,6 +104,15 @@ function parseEnvFile(contents: string): LocalBackendFallback {
   }
 
   return parsed
+}
+
+function isLoopbackBackendUrl(baseUrl: string): boolean {
+  try {
+    const { hostname } = new URL(baseUrl)
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
+  } catch {
+    return false
+  }
 }
 
 export interface BackendRequestOptions {

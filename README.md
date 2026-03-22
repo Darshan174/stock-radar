@@ -59,7 +59,7 @@ cp .env.example .env.local
 Minimum required values:
 
 Backend (`.env`):
-- `BACKEND_API_KEY`
+- `BACKEND_API_KEY` (optional for localhost-only dev; required for shared/prod environments)
 - `SUPABASE_URL`
 - `SUPABASE_KEY`
 - one of `ZAI_API_KEY` or `GROQ_API_KEY` or `GEMINI_API_KEY`
@@ -68,7 +68,7 @@ Web (`web/.env.local`):
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `PY_BACKEND_URL=http://localhost:8000`
-- `PY_BACKEND_API_KEY=<same as BACKEND_API_KEY>`
+- `PY_BACKEND_API_KEY=<same as BACKEND_API_KEY>` (optional when the backend is running on localhost)
 
 ### 3. Install Dependencies
 ```bash

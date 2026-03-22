@@ -34,6 +34,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build backend image
-        run: docker build -t stock-radar-backend .
+        run: docker build -f Dockerfile.backend -t stock-radar-backend .
       - name: Build test
-        run: docker run --rm stock-radar-backend python -c "import sys; sys.path.insert(0, 'src'); from agents.scorer import StockScorer; print('OK')"
+        run: docker run --rm stock-radar-backend python -c "from services.scorer import StockScorer; print('OK')"

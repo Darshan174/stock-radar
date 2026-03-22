@@ -11,6 +11,7 @@ It searches across multiple data sources to find relevant information for:
 
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
@@ -110,55 +111,67 @@ class RAGRetriever:
         sources_searched = []
 
         try:
-            # Search similar analyses
-            if include_analyses:
-                context.similar_analyses = self.storage.search_similar_analyses(
-                    query=query,
-                    stock_symbol=stock_symbol,
-                    limit=max_results_per_source,
-                    match_threshold=match_threshold
-                )
-                sources_searched.append("analyses")
+            # Run independent searches in parallel
+            futures: dict[str, Any] = {}
+            with ThreadPoolExecutor(max_workers=5, thread_name_prefix="rag") as pool:
+                if include_analyses:
+                    futures["analyses"] = pool.submit(
+                        self.storage.search_similar_analyses,
+                        query=query, stock_symbol=stock_symbol,
+                        limit=max_results_per_source, match_threshold=match_threshold,
+                    )
+                if include_signals:
+                    futures["signals"] = pool.submit(
+                        self.storage.search_similar_signals,
+                        query=query, stock_symbol=stock_symbol,
+                        limit=max_results_per_source, match_threshold=match_threshold,
+                    )
+                if include_news:
+                    futures["news"] = pool.submit(
+                        self.storage.search_news,
+                        query=query, limit=max_results_per_source,
+                        match_threshold=match_threshold,
+                    )
+                if include_knowledge:
+                    futures["knowledge"] = pool.submit(
+                        self.storage.search_knowledge_base,
+                        query=query, user_id=user_id,
+                        stock_symbols=[stock_symbol] if stock_symbol else None,
+                        limit=max_results_per_source, match_threshold=match_threshold,
+                    )
+                if include_conversations:
+                    futures["conversations"] = pool.submit(
+                        self.storage.search_chat_history,
+                        query=query, user_id=user_id,
+                        limit=max_results_per_source, match_threshold=match_threshold,
+                    )
 
-            # Search similar signals
-            if include_signals:
-                context.similar_signals = self.storage.search_similar_signals(
-                    query=query,
-                    stock_symbol=stock_symbol,
-                    limit=max_results_per_source,
-                    match_threshold=match_threshold
-                )
-                sources_searched.append("signals")
-
-            # Search relevant news
-            if include_news:
-                context.relevant_news = self.storage.search_news(
-                    query=query,
-                    limit=max_results_per_source,
-                    match_threshold=match_threshold
-                )
-                sources_searched.append("news")
-
-            # Search knowledge base
-            if include_knowledge:
-                context.knowledge_entries = self.storage.search_knowledge_base(
-                    query=query,
-                    user_id=user_id,
-                    stock_symbols=[stock_symbol] if stock_symbol else None,
-                    limit=max_results_per_source,
-                    match_threshold=match_threshold
-                )
-                sources_searched.append("knowledge")
-
-            # Search chat history
-            if include_conversations:
-                context.similar_conversations = self.storage.search_chat_history(
-                    query=query,
-                    user_id=user_id,
-                    limit=max_results_per_source,
-                    match_threshold=match_threshold
-                )
-                sources_searched.append("conversations")
+                # Collect results as they complete under a single 10s deadline.
+                # as_completed raises TimeoutError when the deadline expires,
+                # so we catch it to finalize with whatever partial results we have.
+                future_to_key = {f: k for k, f in futures.items()}
+                try:
+                    for future in as_completed(futures.values(), timeout=10):
+                        key = future_to_key[future]
+                        try:
+                            result = future.result(timeout=0)
+                            sources_searched.append(key)
+                            if key == "analyses":
+                                context.similar_analyses = result
+                            elif key == "signals":
+                                context.similar_signals = result
+                            elif key == "news":
+                                context.relevant_news = result
+                            elif key == "knowledge":
+                                context.knowledge_entries = result
+                            elif key == "conversations":
+                                context.similar_conversations = result
+                        except Exception as e:
+                            logger.warning(f"RAG search '{key}' failed: {e}")
+                except TimeoutError:
+                    for fut, key in future_to_key.items():
+                        if key not in sources_searched:
+                            logger.warning(f"RAG search '{key}' timed out")
 
             # Calculate totals
             context.total_results = (

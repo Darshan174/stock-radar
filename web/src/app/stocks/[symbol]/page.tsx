@@ -41,6 +41,7 @@ import {
 import { supabase, Stock, Analysis } from "@/lib/supabase"
 import { useLiveStockData } from "@/hooks/use-live-stock-data"
 import type { AnalyzeJobCreated, AnalyzeJobStatus } from "@/lib/analyze-contracts"
+import { pollAnalyzeJob } from "@/lib/poll-job"
 
 interface StockDetail extends Stock {
   analyses: Analysis[]
@@ -280,10 +281,12 @@ export default function StockDetailPage() {
 
     fetchChartData()
 
-    // Auto-refresh intraday periods
+    // Auto-refresh intraday periods (pause when tab is hidden)
     const isIntraday = period === "1d" || period === "1w"
     const refreshTimer = isIntraday
-      ? window.setInterval(() => fetchChartData({ background: true }), 30000)
+      ? window.setInterval(() => {
+          if (!document.hidden) fetchChartData({ background: true })
+        }, 30000)
       : null
 
     return () => {
@@ -295,7 +298,7 @@ export default function StockDetailPage() {
     symbol,
     enabled: !!symbol,
     preferWebSocket: true,
-    refreshInterval: 2000,
+    refreshInterval: 5000,
     updateThrottleMs: 0,
   })
 
@@ -371,39 +374,6 @@ export default function StockDetailPage() {
     })
   }, [livePrice, chartMeta.isIntraday, intervalSeconds, chartData.length])
 
-  async function waitForAnalyzeJob(jobId: string, timeoutMs = 180000): Promise<AnalyzeJobStatus> {
-    const startedAt = Date.now()
-
-    while (Date.now() - startedAt < timeoutMs) {
-      const statusResponse = await fetch(`/api/analyze/status?jobId=${encodeURIComponent(jobId)}`, {
-        cache: "no-store",
-      })
-
-      const statusData = (await statusResponse.json()) as AnalyzeJobStatus & { error?: string }
-      if (!statusResponse.ok) {
-        throw new Error(statusData.error || "Failed to fetch analysis status")
-      }
-
-      if (statusData.status === "succeeded") {
-        return statusData
-      }
-
-      if (statusData.status === "failed") {
-        throw new Error(statusData.error || "Analysis failed")
-      }
-
-      setAnalyzeState(statusData.status === "queued" ? "queued" : "running")
-      setAnalyzeMessage(
-        statusData.status === "queued"
-          ? `${getAnalysisModeLabel(selectedMode)} analysis queued...`
-          : `${getAnalysisModeLabel(selectedMode)} analysis running...`
-      )
-
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-    }
-
-    throw new Error("Analysis timed out. Please try again.")
-  }
 
   async function handleAnalyze() {
     setAnalyzing(true)
@@ -431,7 +401,16 @@ export default function StockDetailPage() {
 
       setAnalyzeState("running")
       setAnalyzeMessage(`${getAnalysisModeLabel(selectedMode)} analysis running...`)
-      await waitForAnalyzeJob(data.jobId)
+      await pollAnalyzeJob(data.jobId, {
+        onProgress: (status) => {
+          setAnalyzeState(status.status === "queued" ? "queued" : "running")
+          setAnalyzeMessage(
+            status.status === "queued"
+              ? `${getAnalysisModeLabel(selectedMode)} analysis queued...`
+              : `${getAnalysisModeLabel(selectedMode)} analysis running...`
+          )
+        },
+      })
 
       setAnalyzeState("succeeded")
       setAnalyzeMessage(`${getAnalysisModeLabel(selectedMode)} analysis complete. Refreshing...`)

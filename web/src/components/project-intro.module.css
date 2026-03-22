@@ -530,6 +530,16 @@
   color: var(--sr-accent-gold);
 }
 
+.terminalCursor {
+  display: inline-block;
+  width: 8px;
+  height: 14px;
+  background-color: var(--sr-text-secondary);
+  animation: cursorBlink 1s step-end infinite;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
 /* Agent Status */
 .agentCard {
   border-radius: 0.75rem;

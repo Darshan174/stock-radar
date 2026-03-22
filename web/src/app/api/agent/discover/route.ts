@@ -184,8 +184,8 @@ export async function GET(request: NextRequest) {
     specs: {
       responseFormat: "JSON",
       maxResponseTime: "30s",
-      rateLimit: "No limit - pay per request",
-      caching: "None - real-time data",
+      rateLimit: "30 req/min (free), 10 req/min (paid), 10 req/min (analyze jobs)",
+      caching: "In-process TTL caching (quotes 60s, fundamentals 1h, news/sentiment 5m, embeddings 24h)",
       verificationModes: ["direct", "facilitator", "hybrid"],
     },
     

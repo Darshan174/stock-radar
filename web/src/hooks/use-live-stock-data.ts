@@ -264,12 +264,18 @@ export function useLiveStockData({
     }, [symbol])
 
     const fetchLivePrice = useCallback(async () => {
-        if (!symbol) return
+        if (!symbol || document.hidden) return
 
         try {
             const response = await fetch(`/api/live-price?symbol=${encodeURIComponent(symbol)}`, {
                 cache: "no-store",
             })
+
+            // Back off on rate-limit — skip fallback to avoid burning more budget
+            if (response.status === 429) {
+                setError("Rate limited — backing off")
+                return
+            }
 
             if (response.ok) {
                 const parsed = parseLivePricePayload(await response.json())
@@ -286,6 +292,11 @@ export function useLiveStockData({
                 `/api/intraday?symbol=${encodeURIComponent(symbol)}&interval=5m&range=1d`,
                 { cache: "no-store" }
             )
+
+            if (fallbackResponse.status === 429) {
+                setError("Rate limited — backing off")
+                return
+            }
 
             if (!fallbackResponse.ok) {
                 throw new Error("Failed to fetch live price")

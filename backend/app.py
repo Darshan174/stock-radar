@@ -80,10 +80,22 @@ app = FastAPI(
 )
 
 api = APIRouter(prefix="/v1", dependencies=[Depends(verify_backend_auth)])
-jobs = AnalyzeJobManager(max_workers=2, ttl_seconds=1800)
+jobs = AnalyzeJobManager(max_workers=int(os.getenv("JOB_MAX_WORKERS", "4")))
 
 _radar_lock = threading.Lock()
 _radar: StockRadar | None = None
+
+_shared_storage: StockStorage | None = None
+_shared_storage_lock = threading.Lock()
+
+
+def _get_shared_storage() -> StockStorage:
+    global _shared_storage
+    if _shared_storage is None:
+        with _shared_storage_lock:
+            if _shared_storage is None:
+                _shared_storage = StockStorage()
+    return _shared_storage
 
 
 @app.on_event("startup")
@@ -102,9 +114,14 @@ def _startup() -> None:
     except Exception:
         ML_MODEL_LOADED.set(0)
 
+    # Wire up the job execution function and start the poller.
+    jobs.set_run_fn(_run_analysis)
+    jobs.start()
+
 
 @app.on_event("shutdown")
 def _shutdown() -> None:
+    jobs.stop()
     SYSTEM_UP.set(0)
 
 
@@ -161,16 +178,6 @@ def _build_fetcher() -> StockFetcher:
     return StockFetcher()
 
 
-def _build_storage() -> StockStorage:
-    try:
-        return StockStorage()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Storage initialization failed: {exc}",
-        ) from exc
-
-
 def _run_analysis(symbol: str, mode: str, period: str) -> dict[str, Any]:
     radar = _get_radar()
     return radar.analyze_stock(symbol=symbol, mode=mode, period=period)
@@ -217,7 +224,7 @@ def create_analyze_job(payload: AnalyzeJobCreateRequest, request: Request) -> An
     symbol = _validate_symbol(payload.symbol)
     period = payload.period if payload.period in VALID_PERIODS else "max"
 
-    job_id = jobs.submit(_run_analysis, symbol, payload.mode, period)
+    job_id = jobs.submit(symbol, payload.mode, period)
     status_url = f"{request.base_url}v1/analyze/jobs/{job_id}"
 
     return AnalyzeJobCreated(jobId=job_id, statusUrl=status_url, status="queued")
@@ -230,11 +237,25 @@ def get_analyze_job(job_id: str) -> AnalyzeJobStatus:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     return AnalyzeJobStatus(
-        jobId=record.job_id,
-        status=record.status,  # type: ignore[arg-type]
-        result=record.result,
-        error=record.error,
+        jobId=record["job_id"],
+        status=record["status"],
+        result=record.get("result"),
+        error=record.get("error"),
     )
+
+
+@api.get("/analyze/jobs/dlq")
+def list_dlq_jobs(limit: int = Query(default=50, le=200)) -> list[dict[str, Any]]:
+    """List jobs in the dead-letter queue for manual inspection."""
+    return jobs.list_dlq(limit=limit)
+
+
+@api.post("/analyze/jobs/{job_id}/retry")
+def retry_dlq_job(job_id: str) -> dict[str, Any]:
+    """Re-queue a dead-letter job for another round of retries."""
+    if jobs.retry_dlq_job(job_id):
+        return {"job_id": job_id, "status": "requeued"}
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found in DLQ")
 
 
 @api.post("/ask", response_model=AskResponse)
@@ -245,7 +266,8 @@ def ask(payload: AskRequest) -> AskResponse:
 
     stock_symbol = _validate_symbol(payload.symbol) if payload.symbol else None
 
-    assistant = StockChatAssistant()
+    storage = _get_shared_storage()
+    assistant = StockChatAssistant(storage=storage, retriever=RAGRetriever(storage=storage))
 
     if payload.sessionId and SESSION_RE.match(payload.sessionId):
         assistant.session_id = payload.sessionId
@@ -580,7 +602,7 @@ def agent_news_impact(
     sector = fundamentals.get("sector")
     if sector:
         try:
-            retriever = RAGRetriever()
+            retriever = RAGRetriever(storage=_get_shared_storage())
             context = retriever.get_sector_sentiment_context(sector)
             sector_context = {
                 "sector": sector,
@@ -618,6 +640,71 @@ def agent_news_impact(
     }
 
 
+_llm_health_cache: dict[str, Any] = {}
+_llm_health_cache_ts: float = 0.0
+_LLM_HEALTH_CACHE_TTL = 60.0  # seconds
+
+
+def _probe_llm_liveness() -> dict[str, Any]:
+    """Cached LLM liveness probe — pings with a trivial request, TTL 60s."""
+    import time as _time
+
+    global _llm_health_cache, _llm_health_cache_ts
+    now = _time.monotonic()
+    if _llm_health_cache and (now - _llm_health_cache_ts) < _LLM_HEALTH_CACHE_TTL:
+        return _llm_health_cache
+
+    providers = [
+        (name, key)
+        for name, key in (
+            ("zai", "ZAI_API_KEY"),
+            ("groq", "GROQ_API_KEY"),
+            ("gemini", "GEMINI_API_KEY"),
+        )
+        if os.getenv(key)
+    ]
+
+    if not providers:
+        result = {"status": "degraded", "configuredProviders": [], "detail": "no API keys configured"}
+        _llm_health_cache = result
+        _llm_health_cache_ts = now
+        return result
+
+    # Try a minimal completion to confirm at least one provider responds
+    reachable: list[str] = []
+    try:
+        from litellm import completion
+
+        # Use the first configured provider for a tiny probe
+        model_map = {"zai": "zai/Zai-1.5-Flash", "groq": "groq/llama3-8b-8192", "gemini": "gemini/gemini-2.0-flash-lite"}
+        for pname, _pkey in providers:
+            model = model_map.get(pname)
+            if not model:
+                continue
+            try:
+                completion(
+                    model=model,
+                    messages=[{"role": "user", "content": "hi"}],
+                    max_tokens=1,
+                    timeout=5,
+                )
+                reachable.append(pname)
+                break  # one success is enough
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    result = {
+        "status": "healthy" if reachable else "degraded",
+        "configuredProviders": [p[0] for p in providers],
+        "reachableProviders": reachable,
+    }
+    _llm_health_cache = result
+    _llm_health_cache_ts = now
+    return result
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     started_at = getattr(app.state, "started_at", datetime.now(timezone.utc))
@@ -628,35 +715,27 @@ def health() -> dict[str, Any]:
         "llm": {"status": "unknown"},
     }
 
+    # Lightweight Supabase probe: single cheap query instead of full schema check
     try:
-        storage = _build_storage()
-        dependencies["supabase"] = {
-            "status": "healthy" if storage.ensure_schema() else "degraded",
-        }
-    except HTTPException as exc:
-        dependencies["supabase"] = {"status": "unhealthy", "error": exc.detail}
+        storage = _get_shared_storage()
+        storage.client.table("stocks").select("id").limit(1).execute()
+        dependencies["supabase"] = {"status": "healthy"}
     except Exception as exc:
         dependencies["supabase"] = {"status": "unhealthy", "error": str(exc)}
 
-    llm_available = any(
-        bool(os.getenv(k))
-        for k in ("ZAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY")
-    )
-    dependencies["llm"] = {
-        "status": "healthy" if llm_available else "degraded",
-        "configuredProviders": [
-            provider
-            for provider, key in (
-                ("zai", "ZAI_API_KEY"),
-                ("groq", "GROQ_API_KEY"),
-                ("gemini", "GEMINI_API_KEY"),
-            )
-            if os.getenv(key)
-        ],
-    }
+    dependencies["llm"] = _probe_llm_liveness()
+
+    # Derive top-level status from worst dependency state
+    dep_statuses = [d.get("status", "unknown") for d in dependencies.values()]
+    if any(s == "unhealthy" for s in dep_statuses):
+        overall = "unhealthy"
+    elif any(s in ("degraded", "unknown") for s in dep_statuses):
+        overall = "degraded"
+    else:
+        overall = "ok"
 
     return {
-        "status": "ok",
+        "status": overall,
         "service": "stock-radar-backend",
         "timestamp": now.isoformat(),
         "uptimeSeconds": round((now - started_at).total_seconds(), 3),

@@ -22,7 +22,7 @@ async function handleAnalyze(request: NextRequest): Promise<NextResponse> {
 
   const created = await backendRequest<AnalyzeJobCreated>("/v1/analyze/jobs", {
     method: "POST",
-    timeoutMs: 5000,
+    timeoutMs: 15000,
     body: {
       symbol: symbolCheck.value,
       mode,

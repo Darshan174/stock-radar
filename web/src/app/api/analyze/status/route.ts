@@ -4,7 +4,7 @@ import type { AnalyzeJobStatus } from "@/lib/analyze-contracts"
 import { enforceRateLimit, RATE_BUCKETS } from "@/lib/rate-limit"
 
 export async function GET(request: NextRequest) {
-  const limited = await enforceRateLimit(request, RATE_BUCKETS.free)
+  const limited = await enforceRateLimit(request, RATE_BUCKETS.jobStatus)
   if (limited) return limited
 
   const jobId = request.nextUrl.searchParams.get("jobId")

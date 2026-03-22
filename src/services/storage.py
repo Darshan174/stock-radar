@@ -3,9 +3,12 @@ Stock Radar - Supabase storage and vector embeddings.
 Persists stocks, price data, analysis, signals, and alerts with semantic search.
 """
 
+import hashlib
 import os
 import logging
 import math
+import threading
+import time as _time
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Optional, Any
@@ -34,6 +37,36 @@ class EmbeddingResult:
     provider: str
     model: str
     dimension: int
+
+
+# ── In-process TTL cache for embedding vectors ─────────────────────────────
+# Identical queries generate identical embeddings; cache to avoid redundant
+# API calls (Cohere/Gemini).  Default TTL = cache_embedding_ttl_sec (86400s).
+
+_embed_cache: dict[str, tuple[float, list[float]]] = {}
+_embed_cache_lock = threading.Lock()
+
+_EMBED_CACHE_TTL: int = (
+    getattr(_cfg, "cache_embedding_ttl_sec", 86400) if _cfg else 86400
+)
+
+
+def _embed_cache_key(text: str, input_type: str) -> str:
+    h = hashlib.sha256(f"{input_type}:{text}".encode()).hexdigest()[:24]
+    return f"emb:{h}"
+
+
+def _embed_cache_get(key: str) -> list[float] | None:
+    with _embed_cache_lock:
+        entry = _embed_cache.get(key)
+        if entry and entry[0] > _time.monotonic():
+            return entry[1]
+    return None
+
+
+def _embed_cache_set(key: str, vec: list[float]) -> None:
+    with _embed_cache_lock:
+        _embed_cache[key] = (_time.monotonic() + _EMBED_CACHE_TTL, vec)
 
 
 class BaseEmbeddings:
@@ -79,8 +112,15 @@ class BaseEmbeddings:
         input_type: str = "search_document",
         title: Optional[str] = None,
     ) -> list[float]:
+        key = _embed_cache_key(text, input_type)
+        cached = _embed_cache_get(key)
+        if cached is not None:
+            return cached
         result = self.embed(text=text, input_type=input_type, title=title)
-        return result.vector if result else []
+        vec = result.vector if result else []
+        if vec:
+            _embed_cache_set(key, vec)
+        return vec
 
     def is_available(self) -> bool:
         try:
@@ -467,6 +507,8 @@ class StockStorage:
         self.embedding_model = self.embeddings.model
         self.embedding_dim = self.embeddings.configured_dimension or self.embedding_dim
 
+        self._embed_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embed-bg")
+
         logger.info(
             "Initialized StockStorage connected to %s using embeddings provider=%s model=%s dim=%s",
             url,
@@ -474,6 +516,26 @@ class StockStorage:
             self.embedding_model,
             self.embedding_dim,
         )
+
+    def _backfill_embedding(
+        self,
+        table: str,
+        row_id: Any,
+        text: str,
+        input_type: str = "search_document",
+        title: Optional[str] = None,
+        id_column: str = "id",
+        prefix: str = "embedding",
+    ) -> None:
+        """Generate an embedding and UPDATE the row in the background."""
+        try:
+            result = self.embeddings.embed(text, input_type=input_type, title=title)
+            if not result:
+                return
+            payload = self._embedding_metadata(result, prefix=prefix)
+            self.client.table(table).update(payload).eq(id_column, row_id).execute()
+        except Exception as exc:
+            logger.warning("Background embedding backfill failed for %s[%s]: %s", table, row_id, exc)
 
     @staticmethod
     def _embedding_columns(prefix: str = "embedding") -> tuple[str, ...]:
@@ -542,40 +604,46 @@ class StockStorage:
         """
         Verify that required tables exist in the database.
 
+        Probes all tables in parallel (one round-trip each but concurrent)
+        instead of serial one-at-a-time checks.
+
         Returns:
             True if schema is valid, False otherwise
         """
         required_tables = [
             "users", "stocks", "watchlist", "price_history",
             "technical_indicators", "news", "analysis", "signals", "alerts",
-            "chat_history", "knowledge_base",
+            "chat_history", "knowledge_base", "analyze_jobs",
         ]
-        missing_tables = []
+
+        def _probe(table: str) -> str | None:
+            try:
+                self.client.table(table).select("*").limit(0).execute()
+                return None
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "does not exist" in error_msg or "relation" in error_msg:
+                    return table
+                return None
 
         try:
-            for table in required_tables:
-                try:
-                    self.client.table(table).select("*").limit(0).execute()
-                    logger.debug(f"Table '{table}' exists")
-                except Exception as e:
-                    error_msg = str(e).lower()
-                    if "does not exist" in error_msg or "relation" in error_msg:
-                        missing_tables.append(table)
-                        logger.warning(f"Table '{table}' not found")
-
-            if missing_tables:
-                logger.error(
-                    f"Missing required tables: {missing_tables}. "
-                    "Please run database migrations."
-                )
-                return False
-
-            logger.info("Schema verification completed successfully")
-            return True
-
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=len(required_tables)) as pool:
+                results = pool.map(_probe, required_tables)
+            missing_tables = [t for t in results if t is not None]
         except Exception as e:
             logger.error(f"Error verifying schema: {type(e).__name__}: {str(e)}")
             return False
+
+        if missing_tables:
+            logger.error(
+                f"Missing required tables: {missing_tables}. "
+                "Please run database migrations."
+            )
+            return False
+
+        logger.info("Schema verification completed successfully")
+        return True
 
     # -------------------------------------------------------------------------
     # USERS
@@ -1048,13 +1116,7 @@ class StockStorage:
             Stored news record
         """
         try:
-            # Generate embedding for semantic search
             embed_text = f"{headline}. {summary}" if summary else headline
-            embedding_result = self.embeddings.embed(
-                embed_text,
-                input_type="search_document",
-                title=headline,
-            )
 
             data = {
                 "stock_id": stock_id,
@@ -1067,7 +1129,6 @@ class StockStorage:
                 "sentiment_label": sentiment_label,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
-            data.update(self._embedding_metadata(embedding_result))
 
             result = self._insert_with_legacy_retry(
                 "news",
@@ -1075,11 +1136,19 @@ class StockStorage:
                 optional_fields=self._embedding_columns(),
             )
 
-            if result.data:
-                logger.info(f"Stored news: {headline[:50]}...")
-                return result.data[0]
+            row = result.data[0] if result.data else data
+            logger.info(f"Stored news: {headline[:50]}...")
 
-            return data
+            if result.data:
+                self._embed_pool.submit(
+                    self._backfill_embedding,
+                    table="news",
+                    row_id=row["id"],
+                    text=embed_text,
+                    title=headline,
+                )
+
+            return row
 
         except Exception as e:
             logger.error(f"Error storing news: {str(e)}")
@@ -1308,16 +1377,12 @@ class StockStorage:
             Stored signal record
         """
         try:
-            context_result = self.embeddings.embed(
-                self._build_signal_embedding_text(
-                    signal_type=signal_type,
-                    signal=signal,
-                    reason=reason,
-                    price_at_signal=price_at_signal,
-                    importance=importance,
-                ),
-                input_type="search_document",
-                title=f"{signal_type} {signal}",
+            embed_text = self._build_signal_embedding_text(
+                signal_type=signal_type,
+                signal=signal,
+                reason=reason,
+                price_at_signal=price_at_signal,
+                importance=importance,
             )
             data = {
                 "stock_id": stock_id,
@@ -1330,7 +1395,6 @@ class StockStorage:
                 "is_triggered": False,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
-            data.update(self._embedding_metadata(context_result, prefix="context_embedding"))
 
             result = self._insert_with_legacy_retry(
                 "signals",
@@ -1338,11 +1402,20 @@ class StockStorage:
                 optional_fields=self._embedding_columns(prefix="context_embedding"),
             )
 
-            if result.data:
-                logger.info(f"Stored {importance} {signal} signal for stock {stock_id}")
-                return result.data[0]
+            row = result.data[0] if result.data else data
+            logger.info(f"Stored {importance} {signal} signal for stock {stock_id}")
 
-            return data
+            if result.data:
+                self._embed_pool.submit(
+                    self._backfill_embedding,
+                    table="signals",
+                    row_id=row["id"],
+                    text=embed_text,
+                    title=f"{signal_type} {signal}",
+                    prefix="context_embedding",
+                )
+
+            return row
 
         except Exception as e:
             logger.error(f"Error storing signal: {str(e)}")
@@ -1541,15 +1614,6 @@ class StockStorage:
             if sentiment_summary:
                 embedding_text += f" Sentiment: {sentiment_summary}"
 
-            # Generate embedding
-            embedding_result = None
-            if generate_embedding:
-                embedding_result = self.embeddings.embed(
-                    embedding_text,
-                    input_type="search_document",
-                    title=f"{mode} {signal} analysis",
-                )
-
             data = {
                 "stock_id": stock_id,
                 "mode": mode,
@@ -1566,10 +1630,9 @@ class StockStorage:
                 "llm_tokens_used": llm_tokens_used,
                 "analysis_duration_ms": analysis_duration_ms,
                 "algo_prediction": algo_prediction,
-                "embedding_text": embedding_text if embedding_result else None,
+                "embedding_text": embedding_text,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
-            data.update(self._embedding_metadata(embedding_result))
 
             result = self._insert_with_legacy_retry(
                 "analysis",
@@ -1577,11 +1640,20 @@ class StockStorage:
                 optional_fields=self._embedding_columns() + ("embedding_text",),
             )
 
-            if result.data:
-                logger.info(f"Stored {mode} analysis with embedding for stock {stock_id}: {signal}")
-                return result.data[0]
+            row = result.data[0] if result.data else data
+            logger.info(f"Stored {mode} analysis for stock {stock_id}: {signal}")
 
-            return data
+            # Backfill embedding in background so the write path isn't blocked
+            if generate_embedding and result.data:
+                self._embed_pool.submit(
+                    self._backfill_embedding,
+                    table="analysis",
+                    row_id=row["id"],
+                    text=embedding_text,
+                    title=f"{mode} {signal} analysis",
+                )
+
+            return row
 
         except Exception as e:
             logger.error(f"Error storing analysis with embedding: {str(e)}")
@@ -1779,14 +1851,6 @@ class StockStorage:
             Stored chat message record
         """
         try:
-            embedding_result = None
-            if generate_embedding and content:
-                embedding_result = self.embeddings.embed(
-                    content,
-                    input_type="search_document",
-                    title=role,
-                )
-
             data = {
                 "session_id": session_id,
                 "user_id": user_id,
@@ -1798,7 +1862,6 @@ class StockStorage:
                 "model_used": model_used,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
-            data.update(self._embedding_metadata(embedding_result))
 
             result = self._insert_with_legacy_retry(
                 "chat_history",
@@ -1806,11 +1869,19 @@ class StockStorage:
                 optional_fields=self._embedding_columns(),
             )
 
-            if result.data:
-                logger.debug(f"Stored chat message for session {session_id}")
-                return result.data[0]
+            row = result.data[0] if result.data else data
+            logger.debug(f"Stored chat message for session {session_id}")
 
-            return data
+            if generate_embedding and content and result.data:
+                self._embed_pool.submit(
+                    self._backfill_embedding,
+                    table="chat_history",
+                    row_id=row["id"],
+                    text=content,
+                    title=role,
+                )
+
+            return row
 
         except Exception as e:
             logger.error(f"Error storing chat message: {str(e)}")
@@ -1916,13 +1987,7 @@ class StockStorage:
             Stored knowledge entry
         """
         try:
-            # Generate embedding from title + content
             embed_text = f"{title}. {content}"
-            embedding_result = self.embeddings.embed(
-                embed_text,
-                input_type="search_document",
-                title=title,
-            )
 
             data = {
                 "user_id": user_id,
@@ -1936,7 +2001,6 @@ class StockStorage:
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }
-            data.update(self._embedding_metadata(embedding_result))
 
             result = self._insert_with_legacy_retry(
                 "knowledge_base",
@@ -1944,11 +2008,19 @@ class StockStorage:
                 optional_fields=self._embedding_columns(),
             )
 
-            if result.data:
-                logger.info(f"Stored knowledge entry: {title[:50]}...")
-                return result.data[0]
+            row = result.data[0] if result.data else data
+            logger.info(f"Stored knowledge entry: {title[:50]}...")
 
-            return data
+            if result.data:
+                self._embed_pool.submit(
+                    self._backfill_embedding,
+                    table="knowledge_base",
+                    row_id=row["id"],
+                    text=embed_text,
+                    title=title,
+                )
+
+            return row
 
         except Exception as e:
             logger.error(f"Error storing knowledge: {str(e)}")

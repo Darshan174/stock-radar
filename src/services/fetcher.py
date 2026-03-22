@@ -5,6 +5,8 @@ Fetches price data, technical indicators, and news from multiple sources.
 
 import os
 import logging
+import threading
+import time as _time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Any
@@ -81,6 +83,52 @@ class NewsItem:
     related_symbols: List[str]
 
 
+# ── In-process TTL cache ─────────────────────────────────────────────────
+# Keyed on (method_name, symbol, *extra). Thread-safe. Used by hot-path
+# methods to honour the TTL values defined in config.py.
+
+_ttl_cache: dict[str, tuple[float, Any]] = {}
+_ttl_lock = threading.Lock()
+
+
+def _cache_get(key: str) -> Any:
+    with _ttl_lock:
+        entry = _ttl_cache.get(key)
+        if entry and entry[0] > _time.monotonic():
+            return entry[1]
+    return _CACHE_MISS
+
+
+def _cache_set(key: str, value: Any, ttl: int) -> None:
+    if ttl <= 0:
+        return
+    with _ttl_lock:
+        _ttl_cache[key] = (_time.monotonic() + ttl, value)
+
+
+class _CacheMiss:
+    """Sentinel so we can cache None results."""
+    pass
+
+
+_CACHE_MISS = _CacheMiss()
+
+
+def _load_cache_ttls() -> dict[str, int]:
+    """Read TTL values from config.py settings (with safe fallbacks)."""
+    try:
+        from config import settings as _cfg
+        return {
+            "quote": getattr(_cfg, "cache_quote_ttl_sec", 60),
+            "fundamentals": getattr(_cfg, "cache_fundamentals_ttl_sec", 3600),
+            "analysis": getattr(_cfg, "cache_analysis_ttl_sec", 900),
+            "embedding": getattr(_cfg, "cache_embedding_ttl_sec", 86400),
+            "sentiment": getattr(_cfg, "cache_sentiment_ttl_sec", 300),
+        }
+    except Exception:
+        return {"quote": 60, "fundamentals": 3600, "analysis": 900, "embedding": 86400, "sentiment": 300}
+
+
 class StockFetcher:
     """
     Fetches stock data from multiple sources.
@@ -115,6 +163,7 @@ class StockFetcher:
         else:
             logger.info("Twelve Data not available, using Yahoo Finance as primary")
         
+        self._ttls = _load_cache_ttls()
         logger.info("StockFetcher initialized")
 
     # -------------------------------------------------------------------------
@@ -124,22 +173,25 @@ class StockFetcher:
     def get_quote(self, symbol: str) -> Optional[StockQuote]:
         """
         Get current stock quote. Uses Twelve Data if available, falls back to Yahoo Finance.
-
-        Args:
-            symbol: Stock symbol (e.g., 'RELIANCE.NS', 'AAPL')
-
-        Returns:
-            StockQuote with current price and stats
+        Results are cached for ``cache_quote_ttl_sec`` (default 60s).
         """
+        key = f"quote:{symbol}"
+        cached = _cache_get(key)
+        if not isinstance(cached, _CacheMiss):
+            return cached
+
         # Try Twelve Data first
         if self.td_client:
             quote = self._get_quote_twelvedata(symbol)
             if quote:
+                _cache_set(key, quote, self._ttls["quote"])
                 return quote
             logger.warning(f"Twelve Data failed for {symbol}, falling back to yfinance")
-        
+
         # Fallback to Yahoo Finance
-        return self._get_quote_yfinance(symbol)
+        result = self._get_quote_yfinance(symbol)
+        _cache_set(key, result, self._ttls["quote"])
+        return result
 
     def _get_quote_twelvedata(self, symbol: str) -> Optional[StockQuote]:
         """Get quote from Twelve Data."""
@@ -220,24 +272,26 @@ class StockFetcher:
     ) -> List[PriceData]:
         """
         Get historical price data. Uses Twelve Data (30+ years) with yfinance fallback.
-
-        Args:
-            symbol: Stock symbol
-            period: Time period ('1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', '20y', 'max')
-            interval: Data interval ('1min', '5min', '15min', '1h', '1day', '1week')
-
-        Returns:
-            List of PriceData objects
+        Cached for 5 minutes keyed on (symbol, period, interval).
         """
+        key = f"history:{symbol}:{period}:{interval}"
+        cached = _cache_get(key)
+        if not isinstance(cached, _CacheMiss):
+            return cached
+
         # Try Twelve Data first
         if self.td_client:
             prices = self._get_price_history_twelvedata(symbol, period, interval)
             if prices:
+                _cache_set(key, prices, 300)
                 return prices
             logger.warning(f"Twelve Data history failed for {symbol}, falling back to yfinance")
-        
+
         # Fallback to Yahoo Finance
-        return self._get_price_history_yfinance(symbol, period, interval)
+        result = self._get_price_history_yfinance(symbol, period, interval)
+        if result:
+            _cache_set(key, result, 300)
+        return result
 
     def _get_price_history_twelvedata(
         self,
@@ -368,13 +422,18 @@ class StockFetcher:
     def get_fundamentals(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         Get fundamental data for long-term analysis.
-
-        Args:
-            symbol: Stock symbol
-
-        Returns:
-            Dictionary with fundamental metrics
+        Results are cached for ``cache_fundamentals_ttl_sec`` (default 3600s).
         """
+        key = f"fundamentals:{symbol}"
+        cached = _cache_get(key)
+        if not isinstance(cached, _CacheMiss):
+            return cached
+
+        result = self._get_fundamentals_uncached(symbol)
+        _cache_set(key, result, self._ttls["fundamentals"])
+        return result
+
+    def _get_fundamentals_uncached(self, symbol: str) -> Optional[Dict[str, Any]]:
         try:
             ticker = yf.Ticker(symbol)
             info = ticker.info
@@ -488,7 +547,17 @@ class StockFetcher:
             return None
 
     def get_news_yahoo(self, symbol: str) -> List[NewsItem]:
-        """Get news from Yahoo Finance."""
+        """Get news from Yahoo Finance. Cached for 5 minutes."""
+        key = f"news_yahoo:{symbol}"
+        cached = _cache_get(key)
+        if not isinstance(cached, _CacheMiss):
+            return cached
+
+        result = self._get_news_yahoo_uncached(symbol)
+        _cache_set(key, result, 300)
+        return result
+
+    def _get_news_yahoo_uncached(self, symbol: str) -> List[NewsItem]:
         try:
             ticker = yf.Ticker(symbol)
             news = ticker.news or []
@@ -518,24 +587,29 @@ class StockFetcher:
     # Finnhub (Secondary - News & Sentiment)
     # -------------------------------------------------------------------------
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     def get_news_finnhub(
         self,
         symbol: str,
         from_date: Optional[datetime] = None,
         to_date: Optional[datetime] = None
     ) -> List[NewsItem]:
-        """
-        Get news from Finnhub API.
+        """Get news from Finnhub API. Cached for 5 minutes."""
+        key = f"news_finnhub:{symbol}"
+        cached = _cache_get(key)
+        if not isinstance(cached, _CacheMiss):
+            return cached
 
-        Args:
-            symbol: Stock symbol (without exchange suffix for US stocks)
-            from_date: Start date for news
-            to_date: End date for news
+        result = self._get_news_finnhub_uncached(symbol, from_date, to_date)
+        _cache_set(key, result, 300)
+        return result
 
-        Returns:
-            List of NewsItem objects
-        """
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+    def _get_news_finnhub_uncached(
+        self,
+        symbol: str,
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None
+    ) -> List[NewsItem]:
         if not self.finnhub_key:
             logger.warning("Finnhub API key not set, skipping")
             return []
@@ -1027,8 +1101,14 @@ class StockFetcher:
         except Exception:
             pass
 
-        # Run independent fetches in parallel
+        # Run independent fetches in parallel with adaptive deadline.
+        # Critical data (quote, history) gets the full 20s budget.
+        # Enrichment data (news, sentiment, fundamentals) gets a tighter
+        # deadline once critical data has landed, cutting tail latency.
         results: Dict[str, Any] = {}
+        _CRITICAL_KEYS = {"quote", "history"}
+        _FULL_DEADLINE_SEC = 20
+        _ENRICHMENT_GRACE_SEC = 5  # extra seconds for enrichment after critical data arrives
 
         with ThreadPoolExecutor(max_workers=5, thread_name_prefix="fetch") as pool:
             futures = {}
@@ -1047,11 +1127,38 @@ class StockFetcher:
                     self.get_sentiment_finnhub, symbol
                 )
 
-            for key, future in futures.items():
-                try:
-                    results[key] = future.result(timeout=30)
-                except Exception as e:
-                    logger.warning(f"  Parallel fetch failed for {key}: {e}")
+            future_to_key = {f: k for k, f in futures.items()}
+            hard_deadline = _time.monotonic() + _FULL_DEADLINE_SEC
+            enrichment_deadline = hard_deadline  # tightened once critical data arrives
+            critical_remaining = _CRITICAL_KEYS & set(futures.keys())
+
+            try:
+                for future in as_completed(futures.values(), timeout=max(0, hard_deadline - _time.monotonic())):
+                    key = future_to_key[future]
+                    try:
+                        results[key] = future.result(timeout=0)
+                    except Exception as e:
+                        logger.warning(f"  Parallel fetch failed for {key}: {e}")
+                        results[key] = None if key != "history" else []
+
+                    # Once all critical data is in, tighten the deadline for enrichment
+                    critical_remaining.discard(key)
+                    if not critical_remaining and enrichment_deadline == hard_deadline:
+                        enrichment_deadline = min(
+                            _time.monotonic() + _ENRICHMENT_GRACE_SEC,
+                            hard_deadline,
+                        )
+
+                    # Break early if we've passed the enrichment deadline and critical data is done
+                    if not critical_remaining and _time.monotonic() > enrichment_deadline:
+                        break
+            except TimeoutError:
+                pass
+
+            # Fill in any futures that didn't complete
+            for key in futures:
+                if key not in results:
+                    logger.warning(f"  Parallel fetch timed out for {key}")
                     results[key] = None if key != "history" else []
 
         # Use realtime quote or API quote
@@ -1093,40 +1200,39 @@ class StockFetcher:
         """
         Get Reddit sentiment from ApeWisdom API (free tier).
         Tracks mentions from r/wallstreetbets, r/stocks, r/investing.
-        
-        Args:
-            symbol: Stock ticker symbol
-            
-        Returns:
-            Dict with mentions, rank, sentiment
+        Results are cached for ``cache_sentiment_ttl_sec`` (default 300s).
         """
+        key = f"reddit_sentiment:{symbol}"
+        cached = _cache_get(key)
+        if not isinstance(cached, _CacheMiss):
+            return cached
+        result: Dict[str, Any] | None = None
         try:
             # ApeWisdom public API - no key required
             url = f"https://apewisdom.io/api/v1.0/filter/all-stocks/page/1"
             response = requests.get(url, timeout=10)
-            
+
             if response.status_code == 200:
                 data = response.json()
                 results = data.get("results", [])
-                
+
                 # Find our symbol in the results
                 for stock in results:
                     if stock.get("ticker", "").upper() == symbol.upper().replace(".NS", "").replace(".BO", ""):
                         mentions = stock.get("mentions", 0)
                         upvotes = stock.get("upvotes", 0)
                         rank = stock.get("rank", 0)
-                        name = stock.get("name", "")
-                        
+
                         # Calculate sentiment based on rank and mentions
                         sentiment = "neutral"
                         if rank <= 10 and mentions > 50:
                             sentiment = "bullish"
                         elif mentions < 5:
                             sentiment = "neutral"
-                            
+
                         logger.info(f"Reddit sentiment for {symbol}: {mentions} mentions, rank #{rank}")
-                        
-                        return {
+
+                        result = {
                             "source": "reddit",
                             "mentions": mentions,
                             "upvotes": upvotes,
@@ -1135,35 +1241,40 @@ class StockFetcher:
                             "subreddits": ["wallstreetbets", "stocks", "investing"],
                             "fetched_at": datetime.now(timezone.utc).isoformat()
                         }
-                
-                # Symbol not found in top results
-                logger.info(f"Reddit: {symbol} not in trending stocks")
-                return {
-                    "source": "reddit",
-                    "mentions": 0,
-                    "sentiment": "neutral",
-                    "fetched_at": datetime.now(timezone.utc).isoformat()
-                }
-                
+                        break
+
+                if result is None:
+                    # Symbol not found in top results
+                    logger.info(f"Reddit: {symbol} not in trending stocks")
+                    result = {
+                        "source": "reddit",
+                        "mentions": 0,
+                        "sentiment": "neutral",
+                        "fetched_at": datetime.now(timezone.utc).isoformat()
+                    }
+
         except Exception as e:
             logger.error(f"Error fetching Reddit sentiment for {symbol}: {e}")
             return {"source": "reddit", "error": str(e)}
 
+        _cache_set(key, result, self._ttls["sentiment"])
+        return result
+
     def get_social_sentiment(self, symbol: str) -> Dict[str, Any]:
         """
         Aggregate social sentiment from multiple sources.
-        
-        Args:
-            symbol: Stock ticker symbol
-            
-        Returns:
-            Dict with aggregated social sentiment
+        Results are cached for ``cache_sentiment_ttl_sec`` (default 300s).
         """
+        key = f"social_sentiment:{symbol}"
+        cached = _cache_get(key)
+        if not isinstance(cached, _CacheMiss):
+            return cached
+
         reddit_data = self.get_reddit_sentiment(symbol)
-        
+
         # Aggregate results
         total_mentions = reddit_data.get("mentions", 0)
-        
+
         # Determine overall sentiment
         if reddit_data.get("sentiment") == "bullish":
             overall = "bullish"
@@ -1171,8 +1282,8 @@ class StockFetcher:
             overall = "bearish"
         else:
             overall = "neutral"
-            
-        return {
+
+        result = {
             "reddit_mentions": reddit_data.get("mentions", 0),
             "reddit_rank": reddit_data.get("rank"),
             "twitter_mentions": None,  # Future: add Twitter API
@@ -1181,6 +1292,8 @@ class StockFetcher:
             "trending_topics": [],  # Future: extract trending topics
             "fetched_at": datetime.now(timezone.utc).isoformat()
         }
+        _cache_set(key, result, self._ttls["sentiment"])
+        return result
 
 
 # =============================================================================

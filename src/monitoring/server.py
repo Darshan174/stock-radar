@@ -48,13 +48,16 @@ def _check_redis() -> dict:
 
 
 def _check_supabase() -> dict:
-    """Check Supabase connectivity."""
+    """Check Supabase connectivity with a lightweight probe."""
     try:
         url = os.getenv("SUPABASE_URL")
         key = os.getenv("SUPABASE_KEY")
         if not url or not key:
             return {"status": "not_configured"}
-        return {"status": "configured"}
+        from supabase import create_client
+        client = create_client(url, key)
+        client.table("stocks").select("id").limit(0).execute()
+        return {"status": "healthy"}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
 

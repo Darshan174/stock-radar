@@ -34,7 +34,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 class StockRadar:
     """
     Main orchestrator for Stock Radar.
@@ -94,6 +93,422 @@ class StockRadar:
 
         logger.info("Stock Radar initialized successfully")
         logger.info(f"Active notification channels: {self.notifications.active_channels}")
+
+    # ------------------------------------------------------------------
+    # Background persistence — runs after the result is returned
+    # ------------------------------------------------------------------
+
+    def _persist_and_notify(
+        self,
+        *,
+        symbol: str,
+        mode: str,
+        company_name: str,
+        current_price: float,
+        analysis,
+        algo_prediction: Optional[dict],
+        fundamentals: dict,
+        price_history: list,
+        data: dict,
+        send_alert: bool,
+        start_time: float,
+    ) -> None:
+        """Store results, run paper trading, and send alerts.
+
+        Called synchronously inside the job worker thread.  ``_store_analysis``
+        is the critical side-effect — if it fails the exception propagates so
+        the job is marked *failed* and can be retried.  Best-effort side
+        effects (paper trading, alerts, usage) run in parallel after
+        persistence succeeds.
+        """
+        # Critical — let failures propagate so the job is not marked succeeded.
+        self._store_analysis(
+            symbol=symbol,
+            mode=mode,
+            company_name=company_name,
+            current_price=current_price,
+            analysis=analysis,
+            price_history=price_history,
+            data=data,
+            start_time=start_time,
+        )
+
+        # Best-effort side effects: run in parallel to cut tail latency.
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _paper_trading():
+            self._run_paper_trading(
+                symbol=symbol,
+                current_price=current_price,
+                analysis=analysis,
+                algo_prediction=algo_prediction,
+                fundamentals=fundamentals,
+            )
+
+        def _alerts():
+            self._send_alerts(
+                symbol=symbol,
+                company_name=company_name,
+                current_price=current_price,
+                mode=mode,
+                analysis=analysis,
+                send_alert=send_alert,
+            )
+
+        def _usage():
+            tracker = get_tracker()
+            usage_summary = tracker.get_session_summary(symbol)
+            if usage_summary:
+                logger.info(f"   Usage: {usage_summary.replace(chr(10), ' | ')}")
+                try:
+                    self.notifications.slack.send_text(usage_summary)
+                except Exception:
+                    pass
+                tracker.clear_session()
+
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="side-fx") as pool:
+            futs = {
+                pool.submit(_paper_trading): "paper_trading",
+                pool.submit(_alerts): "alerts",
+                pool.submit(_usage): "usage",
+            }
+            for fut in as_completed(futs, timeout=15):
+                name = futs[fut]
+                try:
+                    fut.result(timeout=0)
+                except Exception as e:
+                    logger.warning(f"Best-effort side effect '{name}' failed for {symbol}: {e}")
+
+    def _run_paper_trading(self, *, symbol, current_price, analysis, algo_prediction, fundamentals):
+        """Step 3.6 — paper trading shadow recording."""
+        from config import settings as _settings
+        if not (_settings.paper_trading_enabled and algo_prediction):
+            return
+
+        from training.paper_trading import PaperPortfolio
+        from training.broker import Order, PaperBroker, submit_with_retry
+        from training.pre_trade_risk import check_all_pre_trade_risk
+        from training.canary import (
+            check_canary_breach,
+            enable_canary,
+            is_canary_eligible,
+            load_canary_state,
+            record_canary_trade,
+            save_canary_state,
+        )
+        from training.audit import append_audit_event
+
+        pp = PaperPortfolio(
+            paper_dir=_settings.paper_trading_dir,
+            initial_capital=_settings.paper_trading_capital,
+        )
+        audit_enabled = bool(getattr(_settings, "audit_enabled", True))
+        actionable_signals = {"buy", "strong_buy", "sell", "strong_sell"}
+        algo_signal = str(algo_prediction.get("signal", "hold")).lower()
+        sector = (fundamentals or {}).get("sector") or "unknown"
+        proposed_size = abs(float(algo_prediction.get("position_size", 0.0) or 0.0))
+        allow_open = True
+        risk_result = None
+
+        def _audit(event_type: str, data: dict) -> None:
+            if not audit_enabled:
+                return
+            try:
+                append_audit_event(event_type=event_type, data=data, audit_dir=_settings.audit_dir)
+            except Exception as audit_err:
+                logger.debug(f"Audit event failed ({event_type}): {audit_err}")
+
+        _audit("signal", {
+            "symbol": symbol,
+            "signal": algo_signal,
+            "confidence": float(algo_prediction.get("confidence", 0.0) or 0.0),
+            "price": float(current_price or 0.0),
+            "position_size": proposed_size,
+            "model_version": algo_prediction.get("model_version"),
+            "market_regime": algo_prediction.get("market_regime"),
+        })
+
+        # Kill-switch check
+        kill_switch_halted = False
+        if _settings.kill_switch_enabled:
+            from training.kill_switches import check_all_kill_switches
+            rt_data = None
+            rt_connected = False
+            try:
+                from services.realtime import get_realtime_manager
+                rt = get_realtime_manager()
+                rt_connected = bool(getattr(rt, "is_connected", False))
+                if rt_connected and hasattr(rt, "get_latest"):
+                    rt_data = rt.get_latest(symbol)
+            except Exception:
+                pass
+
+            stale_check_enabled = rt_connected and (rt_data is not None)
+            stale_input = rt_data if stale_check_enabled else {"age_ms": 0}
+            stale_ms = _settings.kill_switch_max_stale_ms if stale_check_enabled else 2**63
+
+            ks_result = check_all_kill_switches(
+                closed_trades=pp.get_closed_trades(),
+                positions=pp.get_open_positions(),
+                latest_realtime_data=stale_input,
+                max_daily_loss_pct=_settings.kill_switch_max_daily_loss_pct,
+                max_stale_ms=stale_ms,
+                slippage_threshold_pct=_settings.kill_switch_slippage_threshold_pct,
+            )
+            if ks_result["halted"]:
+                kill_switch_halted = True
+                for reason in ks_result["reasons"]:
+                    logger.warning(f"   KILL SWITCH: {reason}")
+                _audit("kill_switch", {
+                    "symbol": symbol,
+                    "reasons": ks_result.get("reasons", []),
+                    "checks": ks_result.get("checks", {}),
+                })
+
+        if kill_switch_halted:
+            logger.warning(f"   Paper trade SKIPPED for {symbol} (kill switch)")
+            return
+
+        closed_before = pp.get_closed_trades()
+        closed_before_count = len(closed_before)
+        pp.update_prices({symbol: current_price})
+
+        canary_state = None
+        canary_reasons: list[str] = []
+        if _settings.canary_enabled:
+            canary_state = load_canary_state(_settings.canary_dir)
+            if not canary_state.get("enabled", False):
+                if canary_state.get("disabled_reason"):
+                    allow_open = False
+                    canary_reasons.append(canary_state["disabled_reason"])
+                else:
+                    canary_state = enable_canary(_settings.canary_dir)
+
+            if allow_open and algo_signal in actionable_signals:
+                if not is_canary_eligible(symbol, _settings.canary_symbol_list):
+                    allow_open = False
+                    canary_reasons.append(f"Symbol {symbol} not in canary allow-list")
+
+            if allow_open and algo_signal in actionable_signals:
+                canary_check = check_canary_breach(
+                    canary_state,
+                    max_trades=_settings.canary_max_trades,
+                    max_loss_pct=_settings.canary_max_loss_pct,
+                )
+                canary_state = canary_check["state"]
+                if canary_check["breached"]:
+                    allow_open = False
+                    canary_reasons.extend(canary_check["reasons"])
+                    _audit("canary_breach", {
+                        "symbol": symbol,
+                        "reasons": canary_check["reasons"],
+                        "state": canary_state,
+                    })
+
+        if _settings.pre_trade_risk_enabled and algo_signal in actionable_signals and proposed_size > 0:
+            open_positions = pp.get_open_positions()
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            closed_today = [t for t in closed_before if str(t.get("exit_time", ""))[:10] == today]
+            sector_map = {sym: (pos.get("sector") or "unknown") for sym, pos in open_positions.items()}
+            sector_map[symbol] = sector
+
+            risk_result = check_all_pre_trade_risk(
+                symbol=symbol,
+                proposed_size=proposed_size,
+                positions=open_positions,
+                closed_trades_today=closed_today,
+                sector_map=sector_map,
+                max_single_position=_settings.pre_trade_max_position,
+                max_sector_weight=_settings.pre_trade_max_sector,
+                max_daily_loss_pct=_settings.pre_trade_max_daily_loss_pct,
+                max_total_exposure=_settings.pre_trade_max_exposure,
+            )
+            _audit("risk_check", {
+                "symbol": symbol,
+                "blocked": risk_result["blocked"],
+                "reasons": risk_result["reasons"],
+                "checks": risk_result["checks"],
+            })
+            if risk_result["blocked"]:
+                allow_open = False
+                for reason in risk_result["reasons"]:
+                    logger.warning(f"   PRE-TRADE RISK: {reason}")
+
+        if canary_reasons:
+            for reason in canary_reasons:
+                logger.warning(f"   CANARY BLOCK: {reason}")
+            _audit("canary_breach", {"symbol": symbol, "reasons": canary_reasons})
+
+        fill_data = None
+        if algo_signal in actionable_signals and proposed_size > 0 and allow_open:
+            broker_mode = str(_settings.broker_mode or "paper").lower()
+            if broker_mode != "paper":
+                logger.warning("Broker mode '%s' not implemented yet; using paper broker.", broker_mode)
+            broker = PaperBroker(paper_dir=_settings.paper_trading_dir)
+            side = "buy" if algo_signal in ("buy", "strong_buy") else "sell"
+            order = Order(
+                order_id=f"{symbol}:{int(time.time() * 1000)}:{side}",
+                symbol=symbol,
+                side=side,
+                quantity=max(proposed_size, 0.0001),
+                order_type="market",
+                stop_loss=algo_prediction.get("stop_loss"),
+                take_profit=algo_prediction.get("take_profit"),
+                metadata={
+                    "current_price": float(current_price),
+                    "signal": algo_signal,
+                    "confidence": float(algo_prediction.get("confidence", 0.0) or 0.0),
+                    "sector": sector,
+                    "model_version": str(algo_prediction.get("model_version", "")),
+                },
+            )
+            _audit("order", {
+                "symbol": symbol, "order_id": order.order_id, "side": order.side,
+                "quantity": order.quantity, "order_type": order.order_type,
+                "stop_loss": order.stop_loss, "take_profit": order.take_profit,
+            })
+            fill = submit_with_retry(
+                broker, order,
+                max_retries=_settings.broker_retry_max,
+                backoff_base=_settings.broker_retry_backoff,
+            )
+            fill_data = {
+                "symbol": fill.symbol, "order_id": fill.order_id,
+                "fill_id": fill.fill_id, "status": fill.status,
+                "fill_price": fill.fill_price, "filled_quantity": fill.filled_quantity,
+                "error": fill.error,
+            }
+            _audit("fill", fill_data)
+        elif algo_signal in actionable_signals:
+            _audit("order", {
+                "symbol": symbol, "blocked": True,
+                "blocked_by": ("pre_trade_risk" if risk_result and risk_result.get("blocked") else "canary"),
+            })
+
+        pp.record_signal(
+            symbol=symbol, signal=algo_prediction["signal"],
+            confidence=algo_prediction["confidence"], price=current_price,
+            regime=algo_prediction.get("market_regime", "neutral"),
+            position_size=algo_prediction.get("position_size", 0.0),
+            sector=sector, stop_loss=algo_prediction.get("stop_loss"),
+            take_profit=algo_prediction.get("take_profit"),
+            model_version=str(algo_prediction.get("model_version", "")),
+            allow_open=allow_open,
+            metadata={"risk_check": risk_result, "fill": fill_data},
+        )
+
+        if _settings.canary_enabled:
+            if canary_state is None:
+                canary_state = load_canary_state(_settings.canary_dir)
+            closed_after = pp.get_closed_trades()
+            for trade in closed_after[closed_before_count:]:
+                try:
+                    pnl_pct = float(trade.get("pnl_pct", 0.0))
+                except (TypeError, ValueError):
+                    pnl_pct = 0.0
+                canary_state = record_canary_trade(canary_state, pnl_pct)
+            canary_check = check_canary_breach(
+                canary_state,
+                max_trades=_settings.canary_max_trades,
+                max_loss_pct=_settings.canary_max_loss_pct,
+            )
+            canary_state = canary_check["state"]
+            if canary_check["breached"]:
+                _audit("canary_breach", {
+                    "symbol": symbol, "reasons": canary_check["reasons"], "state": canary_state,
+                })
+            save_canary_state(canary_state, _settings.canary_dir)
+
+        logger.info(f"   Paper trade recorded for {symbol}")
+
+    def _store_analysis(self, *, symbol, mode, company_name, current_price, analysis, price_history, data, start_time):
+        """Step 4 — persist analysis data to Supabase."""
+        logger.info("[bg] Storing analysis in database...")
+        stock = self.storage.get_stock_by_symbol(symbol)
+        if not stock:
+            exchange = "NSE" if ".NS" in symbol else "BSE" if ".BO" in symbol else "NASDAQ"
+            currency = "INR" if exchange in ("NSE", "BSE") else "USD"
+            stock = self.storage.get_or_create_stock(
+                symbol=symbol, name=company_name, exchange=exchange,
+                sector=data.get("fundamentals", {}).get("sector") if data.get("fundamentals") else None,
+                currency=currency,
+            )
+
+        stock_id = stock["id"]
+
+        if price_history:
+            price_dicts = []
+            for p in price_history:
+                if hasattr(p, "timestamp"):
+                    price_dicts.append({
+                        "timestamp": p.timestamp, "open": p.open, "high": p.high,
+                        "low": p.low, "close": p.close, "volume": p.volume,
+                    })
+                else:
+                    price_dicts.append(p)
+            self.storage.store_price_data(stock_id=stock_id, prices=price_dicts, timeframe="1d")
+
+        indicators = data.get("indicators", {})
+        if indicators:
+            self.storage.store_indicators(
+                stock_id=stock_id, timestamp=datetime.now(timezone.utc), indicators=indicators,
+            )
+
+        analysis_record = self.storage.store_analysis_with_embedding(
+            stock_id=stock_id, mode=mode,
+            signal=analysis.signal.value, confidence=analysis.confidence,
+            reasoning=analysis.reasoning, technical_summary=analysis.technical_summary,
+            sentiment_summary=analysis.sentiment_summary,
+            support_level=analysis.support_level, resistance_level=analysis.resistance_level,
+            target_price=analysis.target_price, stop_loss=analysis.stop_loss,
+            llm_model=analysis.llm_model, llm_tokens_used=analysis.tokens_used,
+            analysis_duration_ms=int((time.time() - start_time) * 1000),
+            algo_prediction=getattr(analysis, 'algo_prediction', None),
+            generate_embedding=True,
+        )
+
+        if analysis.signal.value in ("strong_buy", "buy", "strong_sell", "sell"):
+            importance = "high" if analysis.confidence >= 0.8 else "medium"
+            self.storage.store_signal(
+                stock_id=stock_id, signal_type="entry",
+                signal="buy" if "buy" in analysis.signal.value else "sell",
+                price_at_signal=current_price, reason=analysis.reasoning[:500],
+                analysis_id=analysis_record.get("id"), importance=importance,
+            )
+
+        return stock_id
+
+    def _send_alerts(self, *, symbol, company_name, current_price, mode, analysis, send_alert):
+        """Step 5 — send notifications."""
+        if not (send_alert and analysis.signal.value in ("strong_buy", "buy", "strong_sell", "sell")):
+            return
+
+        logger.info("[bg] Sending notifications...")
+        alert_result = self.notifications.send_analysis_alert(
+            symbol=symbol, name=company_name, signal=analysis.signal.value,
+            confidence=analysis.confidence, reasoning=analysis.reasoning, mode=mode,
+            current_price=current_price, target_price=analysis.target_price,
+            stop_loss=analysis.stop_loss, support=analysis.support_level,
+            resistance=analysis.resistance_level,
+        )
+
+        # _store_analysis must have run first to get stock_id, but we
+        # tolerate missing stock_id here since this is best-effort.
+        try:
+            stock = self.storage.get_stock_by_symbol(symbol)
+            if stock:
+                for channel, result in alert_result.get("channels", {}).items():
+                    if result.get("success"):
+                        self.storage.store_alert(
+                            user_id="system", stock_id=stock["id"], channel=channel,
+                            message=f"{analysis.signal.value}: {analysis.reasoning[:200]}",
+                            external_id=result.get("timestamp") or result.get("message_id"),
+                            status="sent",
+                        )
+        except Exception as e:
+            logger.debug(f"Alert DB persistence failed: {e}")
+
+        logger.info(f"   Alerts sent to: {list(alert_result.get('channels', {}).keys())}")
 
     def analyze_stock(
         self,
@@ -246,456 +661,22 @@ class StockRadar:
             except Exception as e:
                 logger.warning(f"   Algo prediction skipped: {e}")
 
-            # Step 3.6: Paper trading shadow recording
-            try:
-                from config import settings as _settings
-                if _settings.paper_trading_enabled and algo_prediction:
-                    from training.paper_trading import PaperPortfolio
-                    from training.broker import Order, PaperBroker, submit_with_retry
-                    from training.pre_trade_risk import check_all_pre_trade_risk
-                    from training.canary import (
-                        check_canary_breach,
-                        enable_canary,
-                        is_canary_eligible,
-                        load_canary_state,
-                        record_canary_trade,
-                        save_canary_state,
-                    )
-                    from training.audit import append_audit_event
-                    pp = PaperPortfolio(
-                        paper_dir=_settings.paper_trading_dir,
-                        initial_capital=_settings.paper_trading_capital,
-                    )
-                    audit_enabled = bool(getattr(_settings, "audit_enabled", True))
-                    actionable_signals = {"buy", "strong_buy", "sell", "strong_sell"}
-                    algo_signal = str(algo_prediction.get("signal", "hold")).lower()
-                    sector = (fundamentals or {}).get("sector") or "unknown"
-                    proposed_size = abs(float(algo_prediction.get("position_size", 0.0) or 0.0))
-                    allow_open = True
-                    risk_result = None
-
-                    def _audit(event_type: str, data: dict) -> None:
-                        if not audit_enabled:
-                            return
-                        try:
-                            append_audit_event(
-                                event_type=event_type,
-                                data=data,
-                                audit_dir=_settings.audit_dir,
-                            )
-                        except Exception as audit_err:
-                            logger.debug(f"Audit event failed ({event_type}): {audit_err}")
-
-                    _audit(
-                        "signal",
-                        {
-                            "symbol": symbol,
-                            "signal": algo_signal,
-                            "confidence": float(algo_prediction.get("confidence", 0.0) or 0.0),
-                            "price": float(current_price or 0.0),
-                            "position_size": proposed_size,
-                            "model_version": algo_prediction.get("model_version"),
-                            "market_regime": algo_prediction.get("market_regime"),
-                        },
-                    )
-
-                    # Kill-switch check before recording
-                    kill_switch_halted = False
-                    if _settings.kill_switch_enabled:
-                        from training.kill_switches import check_all_kill_switches
-                        rt_data = None
-                        rt_connected = False
-                        try:
-                            from services.realtime import get_realtime_manager
-                            rt = get_realtime_manager()
-                            rt_connected = bool(getattr(rt, "is_connected", False))
-                            if rt_connected and hasattr(rt, "get_latest"):
-                                rt_data = rt.get_latest(symbol)
-                        except Exception:
-                            pass
-
-                        # Run stale-data check only when realtime feed is
-                        # connected and we have at least one snapshot.
-                        stale_check_enabled = rt_connected and (rt_data is not None)
-                        stale_input = rt_data if stale_check_enabled else {"age_ms": 0}
-                        stale_ms = (
-                            _settings.kill_switch_max_stale_ms
-                            if stale_check_enabled
-                            else 2**63
-                        )
-
-                        ks_result = check_all_kill_switches(
-                            closed_trades=pp.get_closed_trades(),
-                            positions=pp.get_open_positions(),
-                            latest_realtime_data=stale_input,
-                            max_daily_loss_pct=_settings.kill_switch_max_daily_loss_pct,
-                            max_stale_ms=stale_ms,
-                            slippage_threshold_pct=_settings.kill_switch_slippage_threshold_pct,
-                        )
-                        if ks_result["halted"]:
-                            kill_switch_halted = True
-                            for reason in ks_result["reasons"]:
-                                logger.warning(f"   KILL SWITCH: {reason}")
-                            _audit(
-                                "kill_switch",
-                                {
-                                    "symbol": symbol,
-                                    "reasons": ks_result.get("reasons", []),
-                                    "checks": ks_result.get("checks", {}),
-                                },
-                            )
-
-                    if not kill_switch_halted:
-                        # Baseline closed-trade count for post-step canary accounting.
-                        closed_before = pp.get_closed_trades()
-                        closed_before_count = len(closed_before)
-
-                        # Check stop-loss/take-profit on existing positions first
-                        pp.update_prices({symbol: current_price})
-
-                        # Canary gate (symbol allow-list + breach checks)
-                        canary_state = None
-                        canary_reasons: list[str] = []
-                        if _settings.canary_enabled:
-                            canary_state = load_canary_state(_settings.canary_dir)
-                            if not canary_state.get("enabled", False):
-                                if canary_state.get("disabled_reason"):
-                                    allow_open = False
-                                    canary_reasons.append(canary_state["disabled_reason"])
-                                else:
-                                    canary_state = enable_canary(_settings.canary_dir)
-
-                            if allow_open and algo_signal in actionable_signals:
-                                if not is_canary_eligible(symbol, _settings.canary_symbol_list):
-                                    allow_open = False
-                                    canary_reasons.append(
-                                        f"Symbol {symbol} not in canary allow-list"
-                                    )
-
-                            if allow_open and algo_signal in actionable_signals:
-                                canary_check = check_canary_breach(
-                                    canary_state,
-                                    max_trades=_settings.canary_max_trades,
-                                    max_loss_pct=_settings.canary_max_loss_pct,
-                                )
-                                canary_state = canary_check["state"]
-                                if canary_check["breached"]:
-                                    allow_open = False
-                                    canary_reasons.extend(canary_check["reasons"])
-                                    _audit(
-                                        "canary_breach",
-                                        {
-                                            "symbol": symbol,
-                                            "reasons": canary_check["reasons"],
-                                            "state": canary_state,
-                                        },
-                                    )
-
-                        # Pre-trade risk gate (only for actionable new entries)
-                        if (
-                            _settings.pre_trade_risk_enabled
-                            and algo_signal in actionable_signals
-                            and proposed_size > 0
-                        ):
-                            open_positions = pp.get_open_positions()
-                            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                            closed_today = [
-                                t for t in closed_before
-                                if str(t.get("exit_time", ""))[:10] == today
-                            ]
-                            sector_map = {
-                                sym: (pos.get("sector") or "unknown")
-                                for sym, pos in open_positions.items()
-                            }
-                            sector_map[symbol] = sector
-
-                            risk_result = check_all_pre_trade_risk(
-                                symbol=symbol,
-                                proposed_size=proposed_size,
-                                positions=open_positions,
-                                closed_trades_today=closed_today,
-                                sector_map=sector_map,
-                                max_single_position=_settings.pre_trade_max_position,
-                                max_sector_weight=_settings.pre_trade_max_sector,
-                                max_daily_loss_pct=_settings.pre_trade_max_daily_loss_pct,
-                                max_total_exposure=_settings.pre_trade_max_exposure,
-                            )
-                            _audit(
-                                "risk_check",
-                                {
-                                    "symbol": symbol,
-                                    "blocked": risk_result["blocked"],
-                                    "reasons": risk_result["reasons"],
-                                    "checks": risk_result["checks"],
-                                },
-                            )
-                            if risk_result["blocked"]:
-                                allow_open = False
-                                for reason in risk_result["reasons"]:
-                                    logger.warning(f"   PRE-TRADE RISK: {reason}")
-
-                        if canary_reasons:
-                            for reason in canary_reasons:
-                                logger.warning(f"   CANARY BLOCK: {reason}")
-                            _audit(
-                                "canary_breach",
-                                {
-                                    "symbol": symbol,
-                                    "reasons": canary_reasons,
-                                },
-                            )
-
-                        # Broker execution adapter path (paper/live abstraction).
-                        fill_data = None
-                        if algo_signal in actionable_signals and proposed_size > 0 and allow_open:
-                            broker_mode = str(_settings.broker_mode or "paper").lower()
-                            if broker_mode != "paper":
-                                logger.warning(
-                                    "Broker mode '%s' not implemented yet; using paper broker.",
-                                    broker_mode,
-                                )
-                            broker = PaperBroker(paper_dir=_settings.paper_trading_dir)
-                            side = "buy" if algo_signal in ("buy", "strong_buy") else "sell"
-                            order = Order(
-                                order_id=f"{symbol}:{int(time.time() * 1000)}:{side}",
-                                symbol=symbol,
-                                side=side,
-                                quantity=max(proposed_size, 0.0001),
-                                order_type="market",
-                                stop_loss=algo_prediction.get("stop_loss"),
-                                take_profit=algo_prediction.get("take_profit"),
-                                metadata={
-                                    "current_price": float(current_price),
-                                    "signal": algo_signal,
-                                    "confidence": float(algo_prediction.get("confidence", 0.0) or 0.0),
-                                    "sector": sector,
-                                    "model_version": str(algo_prediction.get("model_version", "")),
-                                },
-                            )
-                            _audit(
-                                "order",
-                                {
-                                    "symbol": symbol,
-                                    "order_id": order.order_id,
-                                    "side": order.side,
-                                    "quantity": order.quantity,
-                                    "order_type": order.order_type,
-                                    "stop_loss": order.stop_loss,
-                                    "take_profit": order.take_profit,
-                                },
-                            )
-                            fill = submit_with_retry(
-                                broker,
-                                order,
-                                max_retries=_settings.broker_retry_max,
-                                backoff_base=_settings.broker_retry_backoff,
-                            )
-                            fill_data = {
-                                "symbol": fill.symbol,
-                                "order_id": fill.order_id,
-                                "fill_id": fill.fill_id,
-                                "status": fill.status,
-                                "fill_price": fill.fill_price,
-                                "filled_quantity": fill.filled_quantity,
-                                "error": fill.error,
-                            }
-                            _audit("fill", fill_data)
-                        elif algo_signal in actionable_signals:
-                            _audit(
-                                "order",
-                                {
-                                    "symbol": symbol,
-                                    "blocked": True,
-                                    "blocked_by": (
-                                        "pre_trade_risk"
-                                        if risk_result and risk_result.get("blocked")
-                                        else "canary"
-                                    ),
-                                },
-                            )
-
-                        pp.record_signal(
-                            symbol=symbol,
-                            signal=algo_prediction["signal"],
-                            confidence=algo_prediction["confidence"],
-                            price=current_price,
-                            regime=algo_prediction.get("market_regime", "neutral"),
-                            position_size=algo_prediction.get("position_size", 0.0),
-                            sector=sector,
-                            stop_loss=algo_prediction.get("stop_loss"),
-                            take_profit=algo_prediction.get("take_profit"),
-                            model_version=str(algo_prediction.get("model_version", "")),
-                            allow_open=allow_open,
-                            metadata={
-                                "risk_check": risk_result,
-                                "fill": fill_data,
-                            },
-                        )
-
-                        # Update canary stats from newly closed trades this step.
-                        if _settings.canary_enabled:
-                            if canary_state is None:
-                                canary_state = load_canary_state(_settings.canary_dir)
-                            closed_after = pp.get_closed_trades()
-                            for trade in closed_after[closed_before_count:]:
-                                try:
-                                    pnl_pct = float(trade.get("pnl_pct", 0.0))
-                                except (TypeError, ValueError):
-                                    pnl_pct = 0.0
-                                canary_state = record_canary_trade(canary_state, pnl_pct)
-                            canary_check = check_canary_breach(
-                                canary_state,
-                                max_trades=_settings.canary_max_trades,
-                                max_loss_pct=_settings.canary_max_loss_pct,
-                            )
-                            canary_state = canary_check["state"]
-                            if canary_check["breached"]:
-                                _audit(
-                                    "canary_breach",
-                                    {
-                                        "symbol": symbol,
-                                        "reasons": canary_check["reasons"],
-                                        "state": canary_state,
-                                    },
-                                )
-                            save_canary_state(canary_state, _settings.canary_dir)
-
-                        logger.info(f"   Paper trade recorded for {symbol}")
-                    else:
-                        logger.warning(f"   Paper trade SKIPPED for {symbol} (kill switch)")
-            except Exception as e:
-                logger.debug(f"Paper trading recording skipped: {e}")
-
-            # Step 4: Store in database
-            logger.info("[4/5] Storing analysis in database...")
-
-            # Get or create stock record
-            stock = self.storage.get_stock_by_symbol(symbol)
-            if not stock:
-                # Extract exchange from symbol
-                exchange = "NSE" if ".NS" in symbol else "BSE" if ".BO" in symbol else "NASDAQ"
-                currency = "INR" if exchange in ("NSE", "BSE") else "USD"
-                stock = self.storage.get_or_create_stock(
-                    symbol=symbol,
-                    name=company_name,
-                    exchange=exchange,
-                    sector=fundamentals.get("sector") if fundamentals else None,
-                    currency=currency
-                )
-
-            stock_id = stock["id"]
-
-            # Store price data - convert PriceData objects to dicts
-            if price_history:
-                price_dicts = []
-                for p in price_history:
-                    if hasattr(p, "timestamp"):
-                        # Convert PriceData dataclass to dict
-                        price_dicts.append({
-                            "timestamp": p.timestamp,
-                            "open": p.open,
-                            "high": p.high,
-                            "low": p.low,
-                            "close": p.close,
-                            "volume": p.volume,
-                        })
-                    else:
-                        price_dicts.append(p)
-                self.storage.store_price_data(
-                    stock_id=stock_id,
-                    prices=price_dicts,
-                    timeframe="1d"
-                )
-
-            # Store indicators
-            indicators = data.get("indicators", {})
-            if indicators:
-                self.storage.store_indicators(
-                    stock_id=stock_id,
-                    timestamp=datetime.now(timezone.utc),
-                    indicators=indicators
-                )
-
-            # Store analysis with embedding for RAG
-            analysis_record = self.storage.store_analysis_with_embedding(
-                stock_id=stock_id,
+            # Persist synchronously so the job stays "running" until all
+            # side-effects complete.  If the process crashes mid-persist the
+            # job lock expires and the poller reclaims it automatically.
+            self._persist_and_notify(
+                symbol=symbol,
                 mode=mode,
-                signal=analysis.signal.value,
-                confidence=analysis.confidence,
-                reasoning=analysis.reasoning,
-                technical_summary=analysis.technical_summary,
-                sentiment_summary=analysis.sentiment_summary,
-                support_level=analysis.support_level,
-                resistance_level=analysis.resistance_level,
-                target_price=analysis.target_price,
-                stop_loss=analysis.stop_loss,
-                llm_model=analysis.llm_model,
-                llm_tokens_used=analysis.tokens_used,
-                analysis_duration_ms=int((time.time() - start_time) * 1000),
-                algo_prediction=getattr(analysis, 'algo_prediction', None),
-                generate_embedding=True  # Enable RAG embeddings
+                company_name=company_name,
+                current_price=current_price,
+                analysis=analysis,
+                algo_prediction=algo_prediction,
+                fundamentals=fundamentals,
+                price_history=price_history,
+                data=data,
+                send_alert=send_alert,
+                start_time=start_time,
             )
-
-            # Store signal if actionable
-            if analysis.signal.value in ("strong_buy", "buy", "strong_sell", "sell"):
-                signal_type = "entry"
-                importance = "high" if analysis.confidence >= 0.8 else "medium"
-
-                self.storage.store_signal(
-                    stock_id=stock_id,
-                    signal_type=signal_type,
-                    signal="buy" if "buy" in analysis.signal.value else "sell",
-                    price_at_signal=current_price,
-                    reason=analysis.reasoning[:500],
-                    analysis_id=analysis_record.get("id"),
-                    importance=importance
-                )
-
-            # Step 5: Send notifications
-            if send_alert and analysis.signal.value in ("strong_buy", "buy", "strong_sell", "sell"):
-                logger.info("[5/5] Sending notifications...")
-
-                alert_result = self.notifications.send_analysis_alert(
-                    symbol=symbol,
-                    name=company_name,
-                    signal=analysis.signal.value,
-                    confidence=analysis.confidence,
-                    reasoning=analysis.reasoning,
-                    mode=mode,
-                    current_price=current_price,
-                    target_price=analysis.target_price,
-                    stop_loss=analysis.stop_loss,
-                    support=analysis.support_level,
-                    resistance=analysis.resistance_level,
-                )
-
-                # Record alerts in database
-                for channel, result in alert_result.get("channels", {}).items():
-                    if result.get("success"):
-                        self.storage.store_alert(
-                            user_id="system",  # System-generated alert
-                            stock_id=stock_id,
-                            channel=channel,
-                            message=f"{analysis.signal.value}: {analysis.reasoning[:200]}",
-                            external_id=result.get("timestamp") or result.get("message_id"),
-                            status="sent"
-                        )
-
-                logger.info(f"   Alerts sent to: {list(alert_result.get('channels', {}).keys())}")
-            else:
-                logger.info("[5/5] Skipping notifications (hold signal or disabled)")
-
-            # Send API usage summary to Slack
-            tracker = get_tracker()
-            usage_summary = tracker.get_session_summary(symbol)
-            if usage_summary:
-                logger.info(f"   Usage: {usage_summary.replace(chr(10), ' | ')}")
-                # Send usage summary via Slack
-                try:
-                    self.notifications.slack.send_text(usage_summary)
-                except Exception as e:
-                    logger.debug(f"Could not send usage summary: {e}")
-                tracker.clear_session()
 
             elapsed = time.time() - start_time
             logger.info(f"Analysis complete in {elapsed:.1f}s")
